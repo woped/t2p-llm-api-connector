@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 import openai
 
 app = Flask(__name__)
-app.config['APPLICATION_ROOT'] = '/llm-api-connector'
+# app.config['APPLICATION_ROOT'] = '/llm-api-connector'
 
 @app.route('/call_openai', methods=['POST'])
 def call_openai():
