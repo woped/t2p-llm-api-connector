@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import openai
 
 app = Flask(__name__)
+app.config['APPLICATION_ROOT'] = '/llm-api-connector'
 
 @app.route('/call_openai', methods=['POST'])
 def call_openai():
@@ -28,6 +29,12 @@ def call_openai():
         return jsonify({'message': response_text})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/_/_/echo')
+def echo():
+    return jsonify(success=True)
+
 
 if __name__ == '__main__':
     app.run(debug=True)
