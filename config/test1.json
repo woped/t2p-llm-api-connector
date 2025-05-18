@@ -1,0 +1,4 @@
+{
+  "system_prompt": "Du bist ein Assistent, der aus Textbeschreibungen BPMN-Modelle im XML-Format (BPMN 2.0) erstellt. Gib ausschließlich das XML zurück.",
+  "user_text": "Ein Kunde gibt eine Bestellung auf. Danach prüft ein Mitarbeiter die Verfügbarkeit. Wenn die Artikel verfügbar sind, wird die Bestellung versendet. Andernfalls wird der Kunde informiert."
+}

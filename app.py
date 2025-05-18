@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-import openai
+from openai import OpenAI
 
 app = Flask(__name__)
 # app.config['APPLICATION_ROOT'] = '/llm-api-connector'
@@ -12,8 +12,8 @@ def call_openai():
     user_text = data.get('user_text')
 
     # Create the OpenAI client with the API key provided in the request
-    client = openai.OpenAI(api_key=api_key)
-
+    client = OpenAI(api_key=api_key)
+    
     try:
         chat_completion = client.chat.completions.create(
             messages=[
@@ -29,7 +29,6 @@ def call_openai():
         return jsonify({'message': response_text})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/_/_/echo')
 def echo():
