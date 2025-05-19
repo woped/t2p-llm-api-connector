@@ -4,6 +4,19 @@ from openai import OpenAI
 app = Flask(__name__)
 # app.config['APPLICATION_ROOT'] = '/llm-api-connector'
 
+def run_openai(api_key, system_prompt, user_text):
+    client = OpenAI(api_key=api_key)
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_text}
+        ],
+        temperature=0,
+        model="gpt-4o",
+        max_tokens=4096
+    )
+    return chat_completion.choices[0].message.content.strip()
+
 @app.route('/call_openai', methods=['POST'])
 def call_openai():
     data = request.get_json()
@@ -11,22 +24,9 @@ def call_openai():
     system_prompt = data.get('system_prompt')
     user_text = data.get('user_text')
 
-    # Create the OpenAI client with the API key provided in the request
-    client = OpenAI(api_key=api_key)
-    
     try:
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_text}
-            ],
-            temperature=0,
-            model="gpt-4o",
-            max_tokens=4096
-        )
-        response_text = chat_completion.choices[0].message.content.strip()
-        print("AI Response:", response_text)  # Debug print
-        return jsonify({'message': response_text})
+        chat_completion = run_openai(api_key, system_prompt, user_text)
+        return jsonify({'message': chat_completion})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
