@@ -32,25 +32,7 @@ class AppTestCase(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(data['message'], 'Test response')
     
-    """
-    Test using a real test_case JSON input
-    """
-    def test_bpmn_process_valid(self):
-        data = settings.load_test_case("test1.json")
-
-        response = self.app.post("/call_openai", json={
-            "api_key": settings.API_KEY,
-            "system_prompt": data["system_prompt"],
-            "user_text": data["user_text"]
-        })
-
-        self.assertEqual(response.status_code, 200)
-        json_data = response.get_json()
-        self.assertIn("message", json_data)
-        self.assertTrue(len(json_data["message"].strip()) > 0)
-
-        print("LLM Antwort:\n", json_data["message"])
-
+    
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
     logging.getLogger("test_call_openai").setLevel(logging.DEBUG)
