@@ -7,7 +7,7 @@ import logging
 from config import settings
 
 
-class AppTestCase(unittest.TestCase):
+class Test_App(unittest.TestCase):
     """
     Set up the test client
     """

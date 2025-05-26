@@ -2,7 +2,7 @@ import unittest
 from config import settings
 from app import run_openai 
 
-class TestT2PService(unittest.TestCase):
+class Test_T2P_Service(unittest.TestCase):
     def setUp(self):
         self.api_key = settings.API_KEY
         self.system_prompt = settings.SYSTEM_PROMPT
