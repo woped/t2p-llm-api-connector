@@ -33,12 +33,11 @@ def call_openai():
     user_text = data.get('user_text')
 
     try:
-        # Few-Shot Prompt generieren
+     
         prompt = build_prompt_with_templates(user_text)
 
-        # OpenAI anfragen
         response_text = run_openai(api_key, system_prompt, prompt)
-        print("AI Response:", response_text)  # Optionales Logging
+        print("AI Response:", response_text) 
         return jsonify({'message': response_text})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
