@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from openai import OpenAI
-from config.settings import FEW_SHOT_TEMPLATES, SYSTEM_PROMPT
+from config.settings import FEW_SHOT_TEMPLATES
 
 app = Flask(__name__)
 
@@ -29,6 +29,7 @@ def build_prompt_with_templates(user_input):
 def call_openai():
     data = request.get_json()
     api_key = data.get('api_key')
+    system_prompt = data.get('system_prompt')
     user_text = data.get('user_text')
 
     try:
@@ -36,7 +37,7 @@ def call_openai():
         prompt = build_prompt_with_templates(user_text)
 
         # OpenAI anfragen
-        response_text = run_openai(api_key, SYSTEM_PROMPT, prompt)
+        response_text = run_openai(api_key, system_prompt, prompt)
         print("AI Response:", response_text)  # Optionales Logging
         return jsonify({'message': response_text})
     except Exception as e:
