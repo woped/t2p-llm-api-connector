@@ -4,8 +4,10 @@ from flask.testing import FlaskClient
 from unittest.mock import patch
 from app import app
 import logging
+from config import settings
 
-class AppTestCase(unittest.TestCase):
+
+class Test_App(unittest.TestCase):
     """
     Set up the test client
     """
@@ -29,7 +31,8 @@ class AppTestCase(unittest.TestCase):
             data = response.get_json()
             self.assertEqual(response.status_code, 200)
             self.assertEqual(data['message'], 'Test response')
-
+    
+    
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
     logging.getLogger("test_call_openai").setLevel(logging.DEBUG)
