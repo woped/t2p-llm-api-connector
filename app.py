@@ -32,13 +32,15 @@ def call_openai():
     system_prompt = data.get('system_prompt')
     user_text = data.get('user_text')
 
-    try:
-     
-        prompt = build_prompt_with_templates(user_text)
+    if not api_key or not system_prompt or not user_text:
+        return jsonify({'error': 'Missing required parameters'}), 400
 
+    try:
+        prompt = build_prompt_with_templates(user_text)
         response_text = run_openai(api_key, system_prompt, prompt)
         print("AI Response:", response_text) 
         return jsonify({'message': response_text})
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
