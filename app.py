@@ -17,7 +17,12 @@ def run_openai(api_key, system_prompt, user_text):
     )
     return chat_completion.choices[0].message.content.strip()
 
-def build_prompt_with_templates(user_input):
+def build_prompt(strategy, user_input):
+    if strategy == 'few_shot':
+        return build_few_shot_prompt(user_input)
+    raise ValueError(f"Unsupported prompting strategy: {strategy}")
+
+def build_few_shot_prompt(user_input):
     sections = []
 
     for example in FEW_SHOT_TEMPLATES:
@@ -36,12 +41,13 @@ def call_openai():
     api_key = data.get('api_key')
     system_prompt = data.get('system_prompt')
     user_text = data.get('user_text')
+    prompting_strategy = data.get('prompting_strategie', 'few_shot')
 
     if not api_key or not system_prompt or not user_text:
         return jsonify({'error': 'Missing required parameters'}), 400
 
     try:
-        prompt = build_prompt_with_templates(user_text)
+        prompt = build_prompt(prompting_strategy, user_text)
         response_text = run_openai(api_key, system_prompt, prompt)
         print("AI Response:", response_text) 
         return jsonify({'message': response_text})
