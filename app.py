@@ -18,12 +18,17 @@ def run_openai(api_key, system_prompt, user_text):
     return chat_completion.choices[0].message.content.strip()
 
 def build_prompt_with_templates(user_input):
-    prompt = ""
+    sections = []
+
     for example in FEW_SHOT_TEMPLATES:
-        prompt += f"Beschreibung:\n{example['description']}\n\n"
-        prompt += f"BPMN:\n{example['bpmn']}\n\n"
-    prompt += f"Beschreibung:\n{user_input}\n\nBPMN:\n"
-    return prompt
+        section = (
+            f"Beschreibung:\n{example['description']}\n\n"
+            f"BPMN:\n{example['bpmn']}\n"
+        )
+        sections.append(section)
+
+    sections.append(f"Beschreibung:\n{user_input}\n\nBPMN:\n")
+    return "\n".join(sections)
 
 @app.route('/call_openai', methods=['POST'])
 def call_openai():
