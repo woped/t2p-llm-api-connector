@@ -17,6 +17,10 @@ def run_openai(api_key, system_prompt, user_text):
     )
     return chat_completion.choices[0].message.content.strip()
 
+
+######################## Carlo Baustelle 
+
+ 
 def build_prompt(strategy, user_input):
     if strategy == 'few_shot':
         return build_few_shot_prompt(user_input)
@@ -35,8 +39,6 @@ def build_few_shot_prompt(user_input):
     sections.append(f"Beschreibung:\n{user_input}\n\nBPMN:\n")
     return "\n".join(sections)
 
-
-########################
 def build_single_shot_prompt(user_input):
     example = FEW_SHOT_TEMPLATES[0]
     return (
@@ -48,7 +50,6 @@ def build_single_shot_prompt(user_input):
 def build_zero_shot_prompt(user_input):
     return f"Bitte generiere ein BPMN-Modell zu folgender Beschreibung:\n\n{user_input}\n\nBPMN:"
 
-# 🔧 ✨ Dispatcher ergänzen oder ersetzen:
 def build_prompt(strategy, user_input):
     if strategy == 'few_shot':
         return build_few_shot_prompt(user_input)
