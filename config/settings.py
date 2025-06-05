@@ -72,20 +72,3 @@ def load_few_shot_templates():
 
 FEW_SHOT_TEMPLATES = load_few_shot_templates()
 
-def build_prompt(strategy, user_input):
-    if strategy == 'few_shot':
-        return build_few_shot_prompt(user_input)
-    elif strategy == 'single_shot':
-        return user_input
-    elif strategy == 'zero_shot':
-        return f"Bitte generiere ein BPMN-Modell zu folgender Beschreibung:\n\n{user_input}\n\nBPMN:"
-    else:
-        raise ValueError(f"Unsupported prompting strategy: {strategy}")
-
-def build_single_shot_prompt(user_input):
-    example = FEW_SHOT_TEMPLATES[0]  # Beispiel
-    return (
-        f"Beschreibung:\n{example['description']}\n\n"
-        f"BPMN:\n{example['bpmn']}\n\n"
-        f"Beschreibung:\n{user_input}\n\nBPMN:\n"
-    )
