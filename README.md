@@ -7,6 +7,8 @@ This repository is for the source code handling the web-api call of llm provider
     pip install -r requirements.txt
     ```
 
+After cloning this repository, it's essential to [set up git hooks](https://github.com/woped/woped-git-hooks/blob/main/README.md#activating-git-hooks-after-cloning-a-repository) to ensure project standards.
+
 ## Running the Application
 
 To run the application, you need to execute the `app.py` script. You can do this by running the following command in your terminal:
