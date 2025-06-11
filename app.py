@@ -1,15 +1,12 @@
-from flask import Flask, request, jsonify
-from openai import OpenAI
-from config.settings import FEW_SHOT_TEMPLATES
+app = Flask(_name_)
 
-app = Flask(__name__)
-
-def run_openai(api_key, system_prompt, user_text):
+def run_openai(api_key, system_prompt, user_text, prompting_strategy):
+    prompt = build_prompt(prompting_strategy, user_text)
     client = OpenAI(api_key=api_key)
     chat_completion = client.chat.completions.create(
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_text}
+            {"role": "user", "content": prompt}
         ],
         temperature=0,
         model="gpt-4o",
@@ -17,14 +14,13 @@ def run_openai(api_key, system_prompt, user_text):
     )
     return chat_completion.choices[0].message.content.strip()
 
-
-######################## Carlo Baustelle 
-
- 
+"""
 def build_prompt(strategy, user_input):
     if strategy == 'few_shot':
         return build_few_shot_prompt(user_input)
     raise ValueError(f"Unsupported prompting strategy: {strategy}")
+
+"""
 
 def build_few_shot_prompt(user_input):
     sections = []
@@ -60,9 +56,6 @@ def build_prompt(strategy, user_input):
     else:
         raise ValueError(f"Unsupported prompting strategy: {strategy}")
 
-######################
-
-
 @app.route('/call_openai', methods=['POST'])
 def call_openai():
     data = request.get_json()
@@ -75,17 +68,16 @@ def call_openai():
         return jsonify({'error': 'Missing required parameters'}), 400
 
     try:
-        prompt = build_prompt(prompting_strategy, user_text)
-        response_text = run_openai(api_key, system_prompt, prompt)
+        response_text = run_openai(api_key, system_prompt, user_text,prompting_strategy)
         print("AI Response:", response_text) 
         return jsonify({'message': response_text})
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/_/_/echo')
+@app.route('///echo')
 def echo():
     return jsonify(success=True)
 
-if __name__ == '__main__':
+if _name_ == '_main_':
     app.run(host='0.0.0.0')
