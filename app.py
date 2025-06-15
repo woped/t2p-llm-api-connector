@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import openai
 import time
 import logging
+import sys
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from pythonjsonlogger import jsonlogger
 import os
@@ -15,38 +16,23 @@ CALL_OPENAI_DURATION = Histogram('call_openai_duration_seconds', 'OpenAI call du
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Console handler
-console_handler = logging.StreamHandler()
-console_formatter = jsonlogger.JsonFormatter(
+# Stdout handler with JSON formatter
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_formatter = jsonlogger.JsonFormatter(
     '%(asctime)s %(levelname)s %(name)s %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
-console_handler.setFormatter(console_formatter)
-logger.addHandler(console_handler)
-
-# File handler for Promtail
-try:
-    log_dir = '/app/logs'
-    print(f"Creating log directory at: {log_dir}")
-    os.makedirs(log_dir, exist_ok=True)
-    
-    log_file = os.path.join(log_dir, 'application.log')
-    print(f"Creating log file at: {log_file}")
-    
-    file_handler = logging.FileHandler(log_file)
-    file_formatter = jsonlogger.JsonFormatter(
-        '%(asctime)s %(levelname)s %(name)s %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    file_handler.setFormatter(file_formatter)
-    logger.addHandler(file_handler)
-    
-    logger.info("Logging setup completed successfully")
-except Exception as e:
-    print(f"Error setting up file logging: {str(e)}")
-    logger.error(f"Error setting up file logging: {str(e)}")
+stdout_handler.setFormatter(stdout_formatter)
+logger.addHandler(stdout_handler)
 
 app = Flask(__name__)
+
+# Suppress logging for /metrics endpoint
+@app.after_request
+def after_request(response):
+    if request.path == '/metrics':
+        return response
+    return response
 
 @app.route('/metrics')
 def metrics():
@@ -92,7 +78,6 @@ def call_openai():
 @app.route('/_/_/echo')
 def echo():
     return jsonify(success=True)
-
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0')
