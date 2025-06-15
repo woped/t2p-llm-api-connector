@@ -1,4 +1,8 @@
-app = Flask(_name_)
+from flask import Flask, request, jsonify
+from openai import OpenAI
+from config.settings import FEW_SHOT_TEMPLATES
+
+app = Flask(__name__)
 
 def run_openai(api_key, system_prompt, user_text, prompting_strategy):
     prompt = build_prompt(prompting_strategy, user_text)
@@ -13,6 +17,9 @@ def run_openai(api_key, system_prompt, user_text, prompting_strategy):
         max_tokens=4096
     )
     return chat_completion.choices[0].message.content.strip()
+
+
+######################## Carlo Baustelle 
 
 """
 def build_prompt(strategy, user_input):
@@ -56,6 +63,9 @@ def build_prompt(strategy, user_input):
     else:
         raise ValueError(f"Unsupported prompting strategy: {strategy}")
 
+######################
+
+
 @app.route('/call_openai', methods=['POST'])
 def call_openai():
     data = request.get_json()
@@ -75,9 +85,9 @@ def call_openai():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('///echo')
+@app.route('/_/_/echo')
 def echo():
     return jsonify(success=True)
 
-if _name_ == '_main_':
+if __name__ == '__main__':
     app.run(host='0.0.0.0')
