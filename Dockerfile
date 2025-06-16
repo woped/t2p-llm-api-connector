@@ -4,10 +4,6 @@ FROM python:3.10-slim
 # Set the working directory in the container to /app
 WORKDIR /app
 
-# Create logs directory and set permissions
-RUN mkdir -p /app/logs && \
-    chmod 777 /app/logs
-
 # Copy only requirements first to leverage Docker cache
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
