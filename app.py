@@ -19,7 +19,6 @@ def run_openai(api_key, system_prompt, user_text, prompting_strategy):
     return chat_completion.choices[0].message.content.strip()
 
 
-######################## Carlo Baustelle 
 
 """
 def build_prompt(strategy, user_input):
@@ -63,7 +62,6 @@ def build_prompt(strategy, user_input):
     else:
         raise ValueError(f"Unsupported prompting strategy: {strategy}")
 
-######################
 
 
 @app.route('/call_openai', methods=['POST'])
