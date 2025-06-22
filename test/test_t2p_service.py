@@ -1,12 +1,12 @@
 import unittest
-from config import settings
+from config import config
 from app import run_openai
 
 class Test_T2P_Service(unittest.TestCase):
     def setUp(self):
-        self.api_key = settings.API_KEY
-        self.system_prompt = settings.SYSTEM_PROMPT
-        self.strategies = ['few_shot', 'single_shot', 'zero_shot']
+        self.api_key = config.API_KEY
+        self.system_prompt = config.SYSTEM_PROMPT
+        self.strategies = ['few_shot', 'zero_shot']
 
     def run_test_case(self, sentence, expected_keywords):
         for strategy in self.strategies:

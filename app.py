@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from openai import OpenAI
-from config.settings import FEW_SHOT_TEMPLATES
+from config.config import FEW_SHOT_TEMPLATES
 
 app = Flask(__name__)
 
@@ -19,15 +19,6 @@ def run_openai(api_key, system_prompt, user_text, prompting_strategy):
     return chat_completion.choices[0].message.content.strip()
 
 
-
-"""
-def build_prompt(strategy, user_input):
-    if strategy == 'few_shot':
-        return build_few_shot_prompt(user_input)
-    raise ValueError(f"Unsupported prompting strategy: {strategy}")
-
-"""
-
 def build_few_shot_prompt(user_input):
     sections = []
 
@@ -41,13 +32,6 @@ def build_few_shot_prompt(user_input):
     sections.append(f"Beschreibung:\n{user_input}\n\nBPMN:\n")
     return "\n".join(sections)
 
-def build_single_shot_prompt(user_input):
-    example = FEW_SHOT_TEMPLATES[0]
-    return (
-        f"Beschreibung:\n{example['description']}\n\n"
-        f"BPMN:\n{example['bpmn']}\n\n"
-        f"Beschreibung:\n{user_input}\n\nBPMN:\n"
-    )
 
 def build_zero_shot_prompt(user_input):
     return f"Bitte generiere ein BPMN-Modell zu folgender Beschreibung:\n\n{user_input}\n\nBPMN:"
@@ -55,8 +39,6 @@ def build_zero_shot_prompt(user_input):
 def build_prompt(strategy, user_input):
     if strategy == 'few_shot':
         return build_few_shot_prompt(user_input)
-    elif strategy == 'single_shot':
-        return build_single_shot_prompt(user_input)
     elif strategy == 'zero_shot':
         return build_zero_shot_prompt(user_input)
     else:
