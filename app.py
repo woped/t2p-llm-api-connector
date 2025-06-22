@@ -1,8 +1,30 @@
 from flask import Flask, request, jsonify
 from openai import OpenAI
+import google.generativeai as genai
 from config.config import FEW_SHOT_TEMPLATES
 
 app = Flask(__name__)
+
+# === Prompt Builder ===
+
+def build_prompt(strategy, user_input):
+    if strategy == 'few_shot':
+        sections = []
+        for example in FEW_SHOT_TEMPLATES:
+            sections.append(
+                f"Description:\n{example['description']}\n\nBPMN:\n{example['bpmn']}\n"
+            )
+        sections.append(f"Description:\n{user_input}\n\nBPMN:\n")
+        return "\n".join(sections)
+
+    elif strategy == 'zero_shot':
+        return f"Please generate a BPMN model for the following description:\n\n{user_input}\n\nBPMN:"
+
+    else:
+        raise ValueError(f"Unsupported prompting strategy: {strategy}")
+
+
+# === OpenAI GPT Call ===
 
 def run_openai(api_key, system_prompt, user_text, prompting_strategy):
     prompt = build_prompt(prompting_strategy, user_text)
@@ -19,36 +41,34 @@ def run_openai(api_key, system_prompt, user_text, prompting_strategy):
     return chat_completion.choices[0].message.content.strip()
 
 
-def build_few_shot_prompt(user_input):
-    sections = []
+# === Gemini Call ===
 
-    for example in FEW_SHOT_TEMPLATES:
-        section = (
-            f"Beschreibung:\n{example['description']}\n\n"
-            f"BPMN:\n{example['bpmn']}\n"
-        )
-        sections.append(section)
+def run_gemini(api_key, system_prompt, user_text, prompting_strategy):
+    prompt = build_prompt(prompting_strategy, user_text)
 
-    sections.append(f"Beschreibung:\n{user_input}\n\nBPMN:\n")
-    return "\n".join(sections)
+    genai.configure(api_key=api_key)
 
+    model = genai.GenerativeModel(
+        model_name="models/gemini-1.5-pro-latest",
+        system_instruction=system_prompt
+    )
 
-def build_zero_shot_prompt(user_input):
-    return f"Bitte generiere ein BPMN-Modell zu folgender Beschreibung:\n\n{user_input}\n\nBPMN:"
+    response = model.generate_content(
+        prompt,
+        generation_config={
+            "temperature": 0.0,
+            "top_k": 1,
+            "top_p": 1.0,
+            "max_output_tokens": 2048
+        }
+    )
 
-def build_prompt(strategy, user_input):
-    if strategy == 'few_shot':
-        return build_few_shot_prompt(user_input)
-    elif strategy == 'zero_shot':
-        return build_zero_shot_prompt(user_input)
-    else:
-        raise ValueError(f"Unsupported prompting strategy: {strategy}")
-
+    return response.text.strip()
 
 
-@app.route('/call_openai', methods=['POST'])
-def call_openai():
-    data = request.get_json()
+# === Shared Model Call Handler ===
+
+def handle_model_call(model_runner, data):
     api_key = data.get('api_key')
     system_prompt = data.get('system_prompt')
     user_text = data.get('user_text')
@@ -58,12 +78,21 @@ def call_openai():
         return jsonify({'error': 'Missing required parameters'}), 400
 
     try:
-        response_text = run_openai(api_key, system_prompt, user_text,prompting_strategy)
-        print("AI Response:", response_text) 
+        response_text = model_runner(api_key, system_prompt, user_text, prompting_strategy)
         return jsonify({'message': response_text})
-
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# === Flask Routes ===
+
+@app.route('/call_openai', methods=['POST'])
+def call_openai():
+    return handle_model_call(run_openai, request.get_json())
+
+@app.route('/call_gemini', methods=['POST'])
+def call_gemini():
+    return handle_model_call(run_gemini, request.get_json())
 
 @app.route('/_/_/echo')
 def echo():
