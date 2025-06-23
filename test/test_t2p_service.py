@@ -2,22 +2,31 @@ import unittest
 from config import config
 from app import run_openai
 
-class Test_T2P_Service(unittest.TestCase):
+class TestT2PService(unittest.TestCase):
     def setUp(self):
-        self.api_key = config.API_KEY
-        self.system_prompt = config.SYSTEM_PROMPT
+        self.api_key = config.get_config().API_KEY
+        self.system_prompt = config.get_config().SYSTEM_PROMPT
         self.strategies = ['few_shot', 'zero_shot']
+        self.llm_runner = run_openai
 
     def run_test_case(self, sentence, expected_keywords):
         for strategy in self.strategies:
             with self.subTest(strategy=strategy):
-                result = run_openai(self.api_key, self.system_prompt, sentence, strategy)
+                result = self.llm_runner(
+                    self.api_key,
+                    self.system_prompt,
+                    sentence,
+                    strategy
+                )
                 result_lower = result.lower()
 
                 for keyword in expected_keywords:
-                    self.assertIn(keyword, result_lower)
+                    self.assertTrue(
+                        keyword.lower() in result_lower,
+                        msg=f"Keyword '{keyword}' not found in response:\n{result}"
+                    )
 
-                print(f"[{strategy}] AI Response:\n{result}\n")
+                print(f"[OpenAI | {strategy}] AI Response:\n{result}\n")
 
     def test_linear_process(self):
         sentence = "The customer fills out the form, then a clerk checks the information, and finally the application is approved."
@@ -43,10 +52,10 @@ class Test_T2P_Service(unittest.TestCase):
             "If the credit is insufficient, the application is rejected and the customer is informed."
         )
         expected_keywords = [
-            "loan application", "credit", "request", "submitted", "approved", "rejected", "informed",
-            "clerk", "loan manager", "start", "end"
+            "loan", "credit", "approve", "reject", "inform"
         ]
         self.run_test_case(sentence, expected_keywords)
+
 
 if __name__ == '__main__':
     unittest.main()

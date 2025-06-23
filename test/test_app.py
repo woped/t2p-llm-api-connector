@@ -14,7 +14,6 @@ class Test_App(unittest.TestCase):
         }
 
     def mock_openai_response(self, mock_openai):
-        # Erstelle ein korrektes Mock-Objekt, das wie die echte OpenAI-Antwort funktioniert
         mock_choice = MagicMock()
         mock_choice.message.content = "Test response"
 

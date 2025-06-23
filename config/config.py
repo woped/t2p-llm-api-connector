@@ -2,13 +2,6 @@ import os
 import json
 from pathlib import Path
 
-# === Load Few-Shot Templates ===
-TEMPLATE_PATH = Path(__file__).parent / "few_shot_templates.json"
-
-def load_few_shot_templates():
-    with open(TEMPLATE_PATH, encoding="utf-8") as f:
-        return json.load(f)
-
 # === Base Configuration ===
 class BaseConfig:
     SYSTEM_PROMPT = (
@@ -70,7 +63,6 @@ class BaseConfig:
 
         """
     )
-    FEW_SHOT_TEMPLATES = load_few_shot_templates()
     DEBUG = False
     TESTING = False
     API_KEY = None 

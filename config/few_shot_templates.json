@@ -1,7 +1,7 @@
 [
   {
     "description": "Example: LoanApplication: A customer submits a loan application through the system.\nThe application is first registered by a clerk.\nOnce registered, the process splits into several parallel checks: the customer’s financial history is reviewed, the completeness of the application form is verified, and the availability of sufficient funds is checked.\n\nIf the form is found to be incomplete, the customer is informed and asked to correct it. The process then waits for the customer's reply before continuing.\n\nAfter all checks are completed, the results are merged.\nA decision is then made: if the application meets the necessary requirements, it is approved, the customer is informed of the approval, and the application is archived.\nIf the application is rejected, the customer is notified, the rejection is documented, and the process ends.",
-    "output": 
+    "bpmn": 
         {
       "events": [
         { "id": "startEvent1", "type": "Start", "name": "Loan Application Submitted" },
@@ -58,7 +58,7 @@
   },
   {
     "description": "Example: Mailbox: A user starts in a resting state.\nThey decide to write an email, which brings the message into a \"written\" state.\nOnce the email is written, the user sends it. This action places the email into a virtual mailbox.\n\nMeanwhile, on the recipient’s side, the system receives the email.\nThe recipient then reads the email, which moves the process into a \"received\" state.\nAfter reading, the recipient returns to a waiting state, ready for the next incoming message or action.\n\nThis cycle can repeat whenever new messages are composed and exchanged.",
-    "output": {
+    "bpmn": {
           "events": [
             { "id": "startEvent1", "type": "Start", "name": "Start Resting" },
             { "id": "endEvent1", "type": "End", "name": "Return to Waiting" }
@@ -80,7 +80,7 @@
   },
   {
     "description": "Example: TwoTrafficLightsSafeFair: The system models the behavior of two traffic lights that alternate safely to ensure fairness.\nInitially, the first light is red and the second is green.\n\nWhen the green light of the second traffic light turns yellow and then red, it becomes safe for the first light to begin its transition.\nThe first traffic light changes from red to yellow and then to green, while the second light remains red.\n\nThis alternation continues to ensure that both directions have equal access to go, while never being green at the same time.\n\nThe 'safe1' and 'safe2' places act as synchronization points that enforce mutual exclusion — ensuring that only one light can be green at a time.\n\nThe process loops indefinitely to simulate real-world traffic control.",
-    "output": {
+    "bpmn": {
         "events": [
           { "id": "startEvent1", "type": "Start", "name": "Start Traffic Loop" }
         ],
@@ -114,7 +114,7 @@
   },
   {
       "description":  "A cashier scanning items, telling the total amount, and receiving cash payment.",
-      "output": {
+      "bpmn": {
         "events": [
           { "id": "startEvent1", "type": "Start", "name": "Customer Arrives" },
           { "id": "endEvent1", "type": "End", "name": "Transaction Completed" }
