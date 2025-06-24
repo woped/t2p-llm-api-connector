@@ -1,11 +1,14 @@
 # llm-api-connector
-This repository is for the source code handling the web-api call of llm providers as GTP from Open AI
+
+This repository is for the source code handling the web-api call of llm providers as GPT from Open AI
 
 ## Preqrequisites
 - Install the requirements:
     ```bash
     pip install -r requirements.txt
     ```
+
+After cloning this repository, it's essential to [set up git hooks](https://github.com/woped/woped-git-hooks/blob/main/README.md#activating-git-hooks-after-cloning-a-repository) to ensure project standards.
 
 ## Running the Application
 

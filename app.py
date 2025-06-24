@@ -4,6 +4,32 @@ import google.genai as genai
 from config.config import get_config
 import json
 from pathlib import Path
+import time
+import logging
+import sys
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from pythonjsonlogger import jsonlogger
+import os
+
+# Prometheus Metriken
+REQUEST_COUNT = Counter('http_requests_total', 'Total HTTP requests', ['method', 'endpoint', 'status'])
+REQUEST_LATENCY = Histogram('http_request_duration_seconds', 'HTTP request latency', ['method', 'endpoint'])
+CALL_OPENAI_DURATION = Histogram('call_openai_duration_seconds', 'OpenAI call duration')
+
+# Logging Setup
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Stdout handler with JSON formatter
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_formatter = jsonlogger.JsonFormatter(
+    '%(asctime)s %(levelname)s %(name)s %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+stdout_handler.setFormatter(stdout_formatter)
+logger.addHandler(stdout_handler)
+
+app = Flask(__name__)
 
 # === Load Few-Shot Templates ===
 def load_few_shot_templates():
