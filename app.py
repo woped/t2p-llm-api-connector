@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 from openai import OpenAI
-import google.generativeai as genai
+import google.genai as genai
+from config.config import get_config
 import json
 from pathlib import Path
 
@@ -15,12 +16,7 @@ def load_few_shot_templates():
         return []
 
 FEW_SHOT_TEMPLATES = load_few_shot_templates()
-
-# === Default System Prompt (can still be overridden via POST) ===
-SYSTEM_PROMPT = """
-You are an assistant for breaking down complex process descriptions into BPMN 2.0 elements. ...
-(>> kürzen oder anpassen je nach Originalinhalt <<)
-"""
+SYSTEM_PROMPT= get_config().SYSTEM_PROMPT
 
 app = Flask(__name__)
 
