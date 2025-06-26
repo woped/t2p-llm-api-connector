@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from openai import OpenAI
-import google.genai as genai
+import google.generativeai as genai
 from config.config import get_config
 import json
 from pathlib import Path
@@ -106,18 +106,18 @@ def run_gemini(api_key, system_prompt, user_text, prompting_strategy):
     genai.configure(api_key=api_key)
 
     model = genai.GenerativeModel(
-        model_name="models/gemini-1.5-pro-latest",
+        model_name="gemini-1.5-pro",
         system_instruction=system_prompt
     )
 
     response = model.generate_content(
         prompt,
-        generation_config={
-            "temperature": 0.0,
-            "top_k": 1,
-            "top_p": 1.0,
-            "max_output_tokens": 2048
-        }
+        generation_config=genai.types.GenerationConfig(
+            temperature=0.0,
+            top_k=1,
+            top_p=1.0,
+            max_output_tokens=2048
+        )
     )
     return response.text.strip()
 
@@ -126,9 +126,74 @@ def run_gemini(api_key, system_prompt, user_text, prompting_strategy):
 def handle_model_call(model_runner, api_key, system_prompt, user_text, prompting_strategy):
     try:
         response_text = model_runner(api_key, system_prompt, user_text, prompting_strategy)
-        return jsonify({'message': response_text})
+        
+        # Clean and process JSON response
+        cleaned_response = clean_json_response(response_text)
+        
+        # Always return as string (cleaned_response is always a string now)
+        return jsonify({'message': cleaned_response})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# === JSON Post-processing ===
+def clean_json_response(response_text):
+    """Clean and validate JSON response from AI models, returning a nicely formatted JSON string."""
+    import json
+    
+    # Remove any markdown code blocks if present
+    if response_text.startswith('```json') or response_text.startswith('```'):
+        lines = response_text.split('\n')
+        # Find the first line that starts with { and the last line that ends with }
+        start_idx = 0
+        end_idx = len(lines) - 1
+        for i, line in enumerate(lines):
+            if line.strip().startswith('{'):
+                start_idx = i
+                break
+        for i in range(len(lines) - 1, -1, -1):
+            if line.strip().endswith('}'):
+                end_idx = i
+                break
+        response_text = '\n'.join(lines[start_idx:end_idx + 1])
+    
+    # Remove any leading/trailing whitespace
+    response_text = response_text.strip()
+    
+    # Handle double-escaped JSON strings
+    if response_text.startswith('"{') and response_text.endswith('}"'):
+        try:
+            # Remove outer quotes and unescape
+            inner_json = response_text[1:-1]
+            # Replace escaped quotes
+            inner_json = inner_json.replace('\\"', '"')
+            # Parse and reformat the JSON
+            parsed_json = json.loads(inner_json)
+            # Return as nicely formatted JSON string
+            return json.dumps(parsed_json, indent=2, ensure_ascii=False)
+        except json.JSONDecodeError:
+            pass
+    
+    # If the response is a JSON string (with escaped quotes), parse it
+    if response_text.startswith('"') and response_text.endswith('"'):
+        try:
+            # First parse to get the actual JSON string
+            parsed_string = json.loads(response_text)
+            # Then parse the actual JSON
+            parsed_json = json.loads(parsed_string)
+            # Return as nicely formatted JSON string
+            return json.dumps(parsed_json, indent=2, ensure_ascii=False)
+        except json.JSONDecodeError:
+            pass
+    
+    # Try to parse as direct JSON
+    try:
+        parsed_json = json.loads(response_text)
+        # Return as nicely formatted JSON string
+        return json.dumps(parsed_json, indent=2, ensure_ascii=False)
+    except json.JSONDecodeError:
+        # If parsing fails, return original response
+        return response_text
 
 
 # === Flask Routes ===

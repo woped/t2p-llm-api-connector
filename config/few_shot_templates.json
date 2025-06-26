@@ -69,6 +69,7 @@
             { "id": "task3", "type": "ServiceTask", "name": "Receive Email" },
             { "id": "task4", "type": "UserTask", "name": "Read Email" }
           ],
+          "gateways": [],
           "flows": [
             { "id": "flow1", "type": "SequenceFlow", "source": "startEvent1", "target": "task1" },
             { "id": "flow2", "type": "SequenceFlow", "source": "task1", "target": "task2" },
@@ -124,6 +125,7 @@
           { "id": "task2", "type": "UserTask", "name": "Announce Total Amount" },
           { "id": "task3", "type": "UserTask", "name": "Receive Cash Payment" }
         ],
+        "gateways": [],
         "flows": [
           { "id": "flow1", "type": "SequenceFlow", "source": "startEvent1", "target": "task1" },
           { "id": "flow2", "type": "SequenceFlow", "source": "task1", "target": "task2" },
