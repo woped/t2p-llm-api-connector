@@ -50,7 +50,26 @@ Flows:
 - Each element must have exactly two sequence flows (in and out), except start and end events, which have only one.
 - All flows must use "sequenceFlow" type and have unique IDs.
 
-MANDATORY JSON STRUCTURE:
+
+VALIDATION CHECKLIST:
+✅ Exactly one startEvent with type "startEvent"
+✅ Exactly one endEvent with type "endEvent"  
+✅ All task types are lowercase: "userTask", "serviceTask", "task"
+✅ All gateway types are camelCase: "exclusiveGateway", "parallelGateway"
+✅ All flow types are "sequenceFlow"
+✅ All flows have unique IDs and valid source/target references
+✅ Every element (except start/end) has both incoming and outgoing flows
+
+FAILURE EXAMPLES TO AVOID:
+❌ "intermediateCatchEvent" → causes "Unknown exception: flow5" errors
+❌ "StartEvent" → causes parsing failures
+❌ Multiple endEvents → causes flow reference errors
+❌ Missing flows → causes incomplete transformations
+
+Only return the JSON text – avoid markdown formatting or code blocks.
+Remember: This will be automatically processed by a strict BPMN 2.0 transformer. Any deviation from these exact specifications will cause transformation failures.
+
+EXAMPLE OUTPUT FORMAT AND MANDATORY JSON STRUCTURE:
 
 {
   "events": [
@@ -72,23 +91,15 @@ MANDATORY JSON STRUCTURE:
   ]
 }
 
-VALIDATION CHECKLIST:
-✅ Exactly one startEvent with type "startEvent"
-✅ Exactly one endEvent with type "endEvent"  
-✅ All task types are lowercase: "userTask", "serviceTask", "task"
-✅ All gateway types are camelCase: "exclusiveGateway", "parallelGateway"
-✅ All flow types are "sequenceFlow"
-✅ All flows have unique IDs and valid source/target references
-✅ Every element (except start/end) has both incoming and outgoing flows
+This shouuld also be the output from the LLM call. Beginning with { and ending with }.
 
-FAILURE EXAMPLES TO AVOID:
-❌ "intermediateCatchEvent" → causes "Unknown exception: flow5" errors
-❌ "StartEvent" → causes parsing failures
-❌ Multiple endEvents → causes flow reference errors
-❌ Missing flows → causes incomplete transformations
-
-Only return the JSON text – avoid markdown formatting or code blocks.
-Remember: This will be automatically processed by a strict BPMN 2.0 transformer. Any deviation from these exact specifications will cause transformation failures.
+IMPORTANT REMINDERS:
+- Return ONLY the JSON object without any markdown formatting
+- Ensure all element types use exact lowercase/camelCase as shown above
+- Every process must have exactly ONE startEvent and ONE endEvent
+- All gateway splits must have corresponding joins
+- Each element needs proper incoming/outgoing flow connections       
+        
         """
     )
     
