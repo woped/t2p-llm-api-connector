@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from openai import OpenAI
-import google.genai as genai
+import google.generativeai as genai
 from config.config import get_config
 import json
 from pathlib import Path
@@ -61,9 +61,7 @@ def load_few_shot_templates():
         return []
 
 FEW_SHOT_TEMPLATES = load_few_shot_templates()
-SYSTEM_PROMPT= get_config().SYSTEM_PROMPT
-
-app = Flask(__name__)
+SYSTEM_PROMPT = get_config().SYSTEM_PROMPT
 
 # === Prompt Builder ===
 def build_prompt(strategy, user_input):
@@ -106,18 +104,18 @@ def run_gemini(api_key, system_prompt, user_text, prompting_strategy):
     genai.configure(api_key=api_key)
 
     model = genai.GenerativeModel(
-        model_name="models/gemini-1.5-pro-latest",
+        model_name="gemini-1.5-pro",
         system_instruction=system_prompt
     )
 
     response = model.generate_content(
         prompt,
-        generation_config={
-            "temperature": 0.0,
-            "top_k": 1,
-            "top_p": 1.0,
-            "max_output_tokens": 2048
-        }
+        generation_config=genai.types.GenerationConfig(
+            temperature=0.0,
+            top_k=1,
+            top_p=1.0,
+            max_output_tokens=2048
+        )
     )
     return response.text.strip()
 
