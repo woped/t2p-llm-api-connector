@@ -1,9 +1,9 @@
 import os
-from app.utils import BPMN_SYSTEM_PROMPT
+from app.utils import LLM_SYSTEM_PROMPT
 
 # === Base Configuration ===
 class BaseConfig:
-    SYSTEM_PROMPT = BPMN_SYSTEM_PROMPT
+    SYSTEM_PROMPT = LLM_SYSTEM_PROMPT
     DEBUG = False
     TESTING = False 
 

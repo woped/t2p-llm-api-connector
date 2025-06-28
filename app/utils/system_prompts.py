@@ -1,8 +1,8 @@
 """
-System prompts for the BPMN generation service
+System prompts for the LLM generation service
 """
 
-BPMN_SYSTEM_PROMPT = """
+LLM_SYSTEM_PROMPT = """
 You are an assistant for breaking down complex process descriptions into BPMN 2.0 elements. 
 Your task is to provide a detailed and accurate breakdown of the business process in a structured format. 
 This JSON output will later be converted to valid BPMN 2.0 XML, so accuracy in element naming and structure is critical.
