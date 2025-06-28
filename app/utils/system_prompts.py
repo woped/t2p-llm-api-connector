@@ -1,10 +1,9 @@
-import os
+"""
+System prompts for the BPMN generation service
+"""
 
-# === Base Configuration ===
-class BaseConfig:
-    SYSTEM_PROMPT = (
-    """
-        You are an assistant for breaking down complex process descriptions into BPMN 2.0 elements. 
+BPMN_SYSTEM_PROMPT = """
+You are an assistant for breaking down complex process descriptions into BPMN 2.0 elements. 
 Your task is to provide a detailed and accurate breakdown of the business process in a structured format. 
 This JSON output will later be converted to valid BPMN 2.0 XML, so accuracy in element naming and structure is critical.
 
@@ -49,7 +48,6 @@ Flows:
 - Sequence Flows: Detail all sequence flows, explaining how tasks and events are interconnected. 
 - Each element must have exactly two sequence flows (in and out), except start and end events, which have only one.
 - All flows must use "sequenceFlow" type and have unique IDs.
-
 
 VALIDATION CHECKLIST:
 ✅ Exactly one startEvent with type "startEvent"
@@ -99,36 +97,4 @@ IMPORTANT REMINDERS:
 - Every process must have exactly ONE startEvent and ONE endEvent
 - All gateway splits must have corresponding joins
 - Each element needs proper incoming/outgoing flow connections       
-        
-        """
-    )
-    
-    DEBUG = False
-    TESTING = False
-    API_KEY = None 
-
-# === Development Configuration ===
-class DevelopmentConfig(BaseConfig):
-    DEBUG = True
-    API_KEY = "dev-api-key" 
-
-# === Production Configuration ===
-class ProductionConfig(BaseConfig):
-    API_KEY = os.getenv("API_KEY") 
-
-# === Testing Configuration ===
-class TestingConfig(BaseConfig):
-    DEBUG = True
-    TESTING = True
-    API_KEY = "test-api-key"
-
-# === Select Configuration Class Based on Environment ===
-def get_config():
-    env = os.getenv("FLASK_ENV", "development").lower()
-
-    if env == "production":
-        return ProductionConfig
-    elif env == "testing":
-        return TestingConfig
-    else:
-        return DevelopmentConfig
+"""

@@ -1,14 +1,15 @@
 import unittest
 from unittest.mock import patch, MagicMock
-from config import config
-from app import run_openai
+import config
+from app.services.llm_service import LLMService
 
 class TestT2PService(unittest.TestCase):
     def setUp(self):
-        self.api_key = config.get_config().API_KEY
-        self.system_prompt = config.get_config().SYSTEM_PROMPT
+        config_instance = config.get_config()()  
+        self.api_key = "test-api-key"  # Static test API key
+        self.system_prompt = config_instance.SYSTEM_PROMPT
         self.strategies = ['few_shot', 'zero_shot']
-        self.llm_runner = run_openai
+        self.llm_service = LLMService()
 
     def create_mock_response(self, sentence, expected_keywords, strategy):
         """Create a realistic mock response that contains the expected keywords."""
@@ -28,7 +29,7 @@ class TestT2PService(unittest.TestCase):
         mock_response += "\nEnd Event: Process completed successfully"
         return mock_response
 
-    @patch('app.OpenAI')
+    @patch('app.services.llm_service.OpenAI')
     def run_test_case(self, sentence, expected_keywords, mock_openai):
         for strategy in self.strategies:
             with self.subTest(strategy=strategy):
@@ -43,7 +44,7 @@ class TestT2PService(unittest.TestCase):
                 mock_openai.return_value.chat.completions.create.return_value = mock_completion
 
                 # Run test
-                result = self.llm_runner(
+                result = self.llm_service.call_openai(
                     self.api_key,
                     self.system_prompt,
                     sentence,
