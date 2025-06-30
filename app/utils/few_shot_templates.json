@@ -1,0 +1,129 @@
+[
+  {
+    "description": "Example: LoanApplication: A customer submits a loan application through the system.\nThe application is first registered by a clerk.\nOnce registered, the process splits into several parallel checks: the customer's financial history is reviewed, the completeness of the application form is verified, and the availability of sufficient funds is checked.\n\nIf the form is found to be incomplete, the customer is informed and asked to correct it. The process then waits for the customer's reply before continuing.\n\nAfter all checks are completed, the results are merged.\nA decision is then made: if the application meets the necessary requirements, it is approved, the customer is informed of the approval, and the application is archived.\nIf the application is rejected, the customer is notified, the rejection is documented, and the process ends.",
+    "bpmn": {
+      "events": [
+        { "id": "startEvent1", "type": "startEvent", "name": "Loan Application Submitted" },
+        { "id": "endEvent1", "type": "endEvent", "name": "Process Completed" }
+      ],
+      "tasks": [
+        { "id": "task1", "type": "userTask", "name": "Register Application" },
+        { "id": "task2", "type": "userTask", "name": "Review Financial History" },
+        { "id": "task3", "type": "userTask", "name": "Verify Application Completeness" },
+        { "id": "task4", "type": "serviceTask", "name": "Check Fund Availability" },
+        { "id": "task5", "type": "userTask", "name": "Request Completion from Customer" },
+        { "id": "task6", "type": "userTask", "name": "Wait for Customer Reply" },
+        { "id": "task7", "type": "userTask", "name": "Make Approval Decision" },
+        { "id": "task8", "type": "serviceTask", "name": "Inform Customer of Approval" },
+        { "id": "task9", "type": "serviceTask", "name": "Inform Customer of Rejection" },
+        { "id": "task10", "type": "serviceTask", "name": "Archive Application" },
+        { "id": "task11", "type": "serviceTask", "name": "Document Rejection" }
+      ],
+      "gateways": [
+        { "id": "gateway1", "type": "parallelGateway", "name": "Start Parallel Checks" },
+        { "id": "gateway2", "type": "parallelGateway", "name": "Join Parallel Checks" },
+        { "id": "gateway3", "type": "exclusiveGateway", "name": "Is Form Complete?" },
+        { "id": "gateway4", "type": "exclusiveGateway", "name": "Approval Decision" }
+      ],
+      "flows": [
+        { "id": "flow1", "type": "sequenceFlow", "source": "startEvent1", "target": "task1" },
+        { "id": "flow2", "type": "sequenceFlow", "source": "task1", "target": "gateway1" },
+        { "id": "flow3", "type": "sequenceFlow", "source": "gateway1", "target": "task2" },
+        { "id": "flow4", "type": "sequenceFlow", "source": "gateway1", "target": "task3" },
+        { "id": "flow5", "type": "sequenceFlow", "source": "gateway1", "target": "task4" },
+        { "id": "flow6", "type": "sequenceFlow", "source": "task3", "target": "gateway3" },
+        { "id": "flow7", "type": "sequenceFlow", "source": "gateway3", "target": "task5" },
+        { "id": "flow8", "type": "sequenceFlow", "source": "task5", "target": "task6" },
+        { "id": "flow9", "type": "sequenceFlow", "source": "task6", "target": "task3" },
+        { "id": "flow10", "type": "sequenceFlow", "source": "gateway3", "target": "gateway2" },
+        { "id": "flow11", "type": "sequenceFlow", "source": "task2", "target": "gateway2" },
+        { "id": "flow12", "type": "sequenceFlow", "source": "task4", "target": "gateway2" },
+        { "id": "flow13", "type": "sequenceFlow", "source": "gateway2", "target": "task7" },
+        { "id": "flow14", "type": "sequenceFlow", "source": "task7", "target": "gateway4" },
+        { "id": "flow15", "type": "sequenceFlow", "source": "gateway4", "target": "task8" },
+        { "id": "flow16", "type": "sequenceFlow", "source": "gateway4", "target": "task9" },
+        { "id": "flow17", "type": "sequenceFlow", "source": "task8", "target": "task10" },
+        { "id": "flow18", "type": "sequenceFlow", "source": "task9", "target": "task11" },
+        { "id": "flow19", "type": "sequenceFlow", "source": "task10", "target": "endEvent1" },
+        { "id": "flow20", "type": "sequenceFlow", "source": "task11", "target": "endEvent1" }
+      ]
+    }
+  },
+  {
+    "description": "Example: Mailbox: A user starts in a resting state.\nThey decide to write an email, which brings the message into a \"written\" state.\nOnce the email is written, the user sends it. This action places the email into a virtual mailbox.\n\nMeanwhile, on the recipient's side, the system receives the email.\nThe recipient then reads the email, which moves the process into a \"received\" state.\nAfter reading, the recipient returns to a waiting state, ready for the next incoming message or action.\n\nThis cycle can repeat whenever new messages are composed and exchanged.",
+    "bpmn": {
+      "events": [
+        { "id": "startEvent1", "type": "startEvent", "name": "Start Resting" },
+        { "id": "endEvent1", "type": "endEvent", "name": "Return to Waiting" }
+      ],
+      "tasks": [
+        { "id": "task1", "type": "userTask", "name": "Write Email" },
+        { "id": "task2", "type": "userTask", "name": "Send Email" },
+        { "id": "task3", "type": "serviceTask", "name": "Receive Email" },
+        { "id": "task4", "type": "userTask", "name": "Read Email" }
+      ],
+      "gateways": [],
+      "flows": [
+        { "id": "flow1", "type": "sequenceFlow", "source": "startEvent1", "target": "task1" },
+        { "id": "flow2", "type": "sequenceFlow", "source": "task1", "target": "task2" },
+        { "id": "flow3", "type": "sequenceFlow", "source": "task2", "target": "task3" },
+        { "id": "flow4", "type": "sequenceFlow", "source": "task3", "target": "task4" },
+        { "id": "flow5", "type": "sequenceFlow", "source": "task4", "target": "endEvent1" }
+      ]
+    }
+  },
+  {
+    "description": "Example: TwoTrafficLightsSafeFair: The system models the behavior of two traffic lights that alternate safely to ensure fairness.\nInitially, the first light is red and the second is green.\n\nWhen the green light of the second traffic light turns yellow and then red, it becomes safe for the first light to begin its transition.\nThe first traffic light changes from red to yellow and then to green, while the second light remains red.\n\nThis alternation continues to ensure that both directions have equal access to go, while never being green at the same time.\n\nThe 'safe1' and 'safe2' places act as synchronization points that enforce mutual exclusion — ensuring that only one light can be green at a time.\n\nThe process loops indefinitely to simulate real-world traffic control.",
+    "bpmn": {
+      "events": [
+        { "id": "startEvent1", "type": "startEvent", "name": "Start Traffic Loop" }
+      ],
+      "tasks": [
+        { "id": "task1", "type": "serviceTask", "name": "Switch Light 2 from Green to Yellow" },
+        { "id": "task2", "type": "serviceTask", "name": "Switch Light 2 from Yellow to Red" },
+        { "id": "task3", "type": "serviceTask", "name": "Switch Light 1 from Red to Yellow" },
+        { "id": "task4", "type": "serviceTask", "name": "Switch Light 1 from Yellow to Green" },
+        { "id": "task5", "type": "serviceTask", "name": "Switch Light 1 from Green to Yellow" },
+        { "id": "task6", "type": "serviceTask", "name": "Switch Light 1 from Yellow to Red" },
+        { "id": "task7", "type": "serviceTask", "name": "Switch Light 2 from Red to Yellow Again" },
+        { "id": "task8", "type": "serviceTask", "name": "Switch Light 2 from Yellow to Green" }
+      ],
+      "gateways": [
+        { "id": "gateway1", "type": "exclusiveGateway", "name": "Safe to Switch?" }
+      ],
+      "flows": [
+        { "id": "flow1", "type": "sequenceFlow", "source": "startEvent1", "target": "task1" },
+        { "id": "flow2", "type": "sequenceFlow", "source": "task1", "target": "task2" },
+        { "id": "flow3", "type": "sequenceFlow", "source": "task2", "target": "task3" },
+        { "id": "flow4", "type": "sequenceFlow", "source": "task3", "target": "task4" },
+        { "id": "flow5", "type": "sequenceFlow", "source": "task4", "target": "task5" },
+        { "id": "flow6", "type": "sequenceFlow", "source": "task5", "target": "task6" },
+        { "id": "flow7", "type": "sequenceFlow", "source": "task6", "target": "task7" },
+        { "id": "flow8", "type": "sequenceFlow", "source": "task7", "target": "task8" },
+        { "id": "flow9", "type": "sequenceFlow", "source": "task8", "target": "gateway1" },
+        { "id": "flow10", "type": "sequenceFlow", "source": "gateway1", "target": "task1" }
+      ]
+    }
+  },
+  {
+    "description": "A cashier scanning items, telling the total amount, and receiving cash payment.",
+    "bpmn": {
+      "events": [
+        { "id": "startEvent1", "type": "startEvent", "name": "Customer Arrives" },
+        { "id": "endEvent1", "type": "endEvent", "name": "Transaction Completed" }
+      ],
+      "tasks": [
+        { "id": "task1", "type": "userTask", "name": "Scan Items" },
+        { "id": "task2", "type": "userTask", "name": "Announce Total Amount" },
+        { "id": "task3", "type": "userTask", "name": "Receive Cash Payment" }
+      ],
+      "gateways": [],
+      "flows": [
+        { "id": "flow1", "type": "sequenceFlow", "source": "startEvent1", "target": "task1" },
+        { "id": "flow2", "type": "sequenceFlow", "source": "task1", "target": "task2" },
+        { "id": "flow3", "type": "sequenceFlow", "source": "task2", "target": "task3" },
+        { "id": "flow4", "type": "sequenceFlow", "source": "task3", "target": "endEvent1" }
+      ]
+    }
+  }
+]
