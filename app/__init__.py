@@ -3,6 +3,7 @@ from config import get_config
 import click
 import unittest
 import sys
+from flask_wtf.csrf import CSRFProtect
 
 
 def create_app(config_class=None):
@@ -13,6 +14,10 @@ def create_app(config_class=None):
     if config_class is None:
         config_class = get_config()
     app.config.from_object(config_class)
+    
+    # CSRF-Security
+    if app.config.get('WTF_CSRF_ENABLED', True):
+        csrf = CSRFProtect(app)
     
     # Register blueprints
     from app.api import bp as api_bp
