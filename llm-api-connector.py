@@ -1,9 +1,6 @@
 from app import create_app
 import logging
 from pythonjsonlogger import jsonlogger
-import click
-import unittest
-import sys
 
 
 class MetricsFilter(logging.Filter):
@@ -43,6 +40,3 @@ def setup_logging():
 
 app = create_app()
 setup_logging()
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', debug=True)

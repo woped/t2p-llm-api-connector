@@ -1,22 +1,21 @@
-# Use an official Python runtime as a base image
-FROM python:3.10-slim
+FROM python:3.13-alpine
 
-# Set the working directory in the container to /app
-WORKDIR /app
+ENV FLASK_APP llm-api-connector.py
+ENV FLASK_CONFIG production
 
-# Copy only requirements first to leverage Docker cache
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN adduser -D flasky
+USER flasky
 
-# Copy only necessary files
-COPY app.py .
-COPY requirements.txt .
+WORKDIR /home/flasky
 
-# Make port 5000 available to the world outside this container
+COPY requirements requirements
+RUN python -m venv venv
+RUN venv/bin/pip install -r requirements/docker.txt
+
+COPY app app
+# COPY migrations migrations
+COPY llm-api-connector.py config.py boot.sh ./
+
+# run-time configuration
 EXPOSE 5000
-
-# Define environment variable if needed
-ENV NAME World
-
-# Run app.py when the container launches
-CMD ["python", "app.py"]
+ENTRYPOINT ["./boot.sh"]
