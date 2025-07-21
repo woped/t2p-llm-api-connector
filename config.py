@@ -4,7 +4,7 @@ from app.utils import LLM_SYSTEM_PROMPT
 # === Base Configuration ===
 class BaseConfig:
     SYSTEM_PROMPT = LLM_SYSTEM_PROMPT
-    DEBUG = False
+    DEBUG = True
     TESTING = False
     WTF_CSRF_ENABLED = True 
 
