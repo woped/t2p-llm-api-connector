@@ -7,16 +7,24 @@ on:
     branches: [main, master]
 
 jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bootstrap
+        run: echo "bootstrap job - no actions executed"
+
   validate_commit_messages:
     uses: woped/devops/.github/workflows/validate-commit-msg.yaml@main
 
   linting:
     uses: woped/devops/.github/workflows/linting.yaml@main
+
   testing_flask:
     with:
       FLASK_APP: llm-api-connector.py
       FLASK_ENV: testing
     uses: woped/devops/.github/workflows/testing_flask.yaml@main
+
   sonar_python:
     needs: testing_flask
     uses: woped/devops/.github/workflows/sonar_flask.yaml@main
