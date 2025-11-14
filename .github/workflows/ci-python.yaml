@@ -12,9 +12,11 @@ jobs:
 
   linting:
     uses: woped/devops/.github/workflows/linting.yaml@main
-  sonar_python:
+  testing_flask:
     with:
       FLASK_APP: llm-api-connector.py
       FLASK_ENV: testing
+    uses: woped/devops/.github/workflows/testing_flask.yaml@main
+  sonar_python:
     uses: woped/devops/.github/workflows/sonar_flask.yaml@main
     secrets: inherit
