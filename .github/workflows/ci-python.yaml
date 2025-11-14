@@ -18,5 +18,6 @@ jobs:
       FLASK_ENV: testing
     uses: woped/devops/.github/workflows/testing_flask.yaml@main
   sonar_python:
+    needs: testing_flask
     uses: woped/devops/.github/workflows/sonar_flask.yaml@main
     secrets: inherit
