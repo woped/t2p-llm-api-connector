@@ -16,6 +16,7 @@ COPY app app
 # COPY migrations migrations
 COPY llm-api-connector.py config.py boot.sh ./
 
+RUN chown flasky:flasky boot.sh
 RUN chmod +x boot.sh
 
 # run-time configuration
