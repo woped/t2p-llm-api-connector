@@ -38,5 +38,5 @@ def setup_logging():
     werkzeug_logger.addHandler(console_handler)
 
 
-app = create_app()
 setup_logging()
+app = create_app()
