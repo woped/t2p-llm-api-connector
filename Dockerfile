@@ -16,6 +16,8 @@ COPY app app
 # COPY migrations migrations
 COPY llm-api-connector.py config.py boot.sh ./
 
+RUN chmod +x boot.sh
+
 # run-time configuration
 EXPOSE 5000
 ENTRYPOINT ["./boot.sh"]
