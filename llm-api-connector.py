@@ -38,5 +38,12 @@ def setup_logging():
     werkzeug_logger.addHandler(console_handler)
 
 
-app = create_app()
 setup_logging()
+app = create_app()
+
+@app.cli.command("test")
+def test():
+    """Run the unit tests."""
+    import unittest
+    tests = unittest.TestLoader().discover('tests')
+    unittest.TextTestRunner(verbosity=2).run(tests)

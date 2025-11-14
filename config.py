@@ -4,19 +4,17 @@ from app.utils import LLM_SYSTEM_PROMPT
 # === Base Configuration ===
 class BaseConfig:
     SYSTEM_PROMPT = LLM_SYSTEM_PROMPT
-    DEBUG = True
     TESTING = False
-    WTF_CSRF_ENABLED = True 
+    WTF_CSRF_ENABLED = os.environ.get('WTF_CSRF_ENABLED') or False
+    SECRET_KEY = os.environ.get('SECRET_KEY') or "fj92348759t182htpoihf9sd8gu98341hrpasdhuq8gpsiodfh9823r"
 
 # === Development Configuration ===
 class DevelopmentConfig(BaseConfig):
     DEBUG = True
-    WTF_CSRF_ENABLED = False
 
 # === Production Configuration ===
 class ProductionConfig(BaseConfig):
     DEBUG = False
-    WTF_CSRF_ENABLED = True
 
 # === Testing Configuration ===
 class TestingConfig(BaseConfig):
