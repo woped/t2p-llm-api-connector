@@ -18,5 +18,7 @@ jobs:
     uses: woped/devops/.github/workflows/testing_flask.yaml@main
   sonar_python:
     needs: testing_flask
-    uses: woped/devops/.github/workflows/sonar_python.yaml@main
+    with:
+      FLASK_APP: llm-api-connector.py
+    uses: woped/devops/.github/workflows/sonar_flask.yaml@main
     secrets: inherit
