@@ -16,8 +16,8 @@ COPY app app
 # COPY migrations migrations
 COPY llm-api-connector.py config.py boot.sh ./
 
-RUN chown flasky:flasky boot.sh
-RUN chmod +x boot.sh
+RUN /bin/sh -c "chown flasky:flasky boot.sh"
+RUN /bin/sh -c "chmod +x boot.sh"
 
 # run-time configuration
 EXPOSE 5000
