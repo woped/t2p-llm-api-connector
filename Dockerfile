@@ -17,8 +17,7 @@ COPY app app
 COPY llm-api-connector.py config.py boot.sh ./
 
 RUN ls -ltra
-RUN chown flasky boot.sh
-RUN chmod +x boot.sh
+RUN chmod 0750 boot.sh
 
 # run-time configuration
 EXPOSE 5000
