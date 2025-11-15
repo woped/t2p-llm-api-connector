@@ -1,24 +1,29 @@
 FROM python:3.13-alpine
 
-ENV FLASK_APP llm-api-connector.py
-ENV FLASK_CONFIG production
+ENV FLASK_APP=llm-api-connector.py \
+    FLASK_CONFIG=production
 
-RUN adduser -D flasky
-USER flasky
+# User + Gruppe anlegen
+RUN addgroup -S flasky && adduser -S -G flasky flasky
 
 WORKDIR /home/flasky
 
+# Requirements kopieren + installieren (als root)
 COPY requirements requirements
-RUN python -m venv venv
-RUN venv/bin/pip install -r requirements/docker.txt
+RUN python -m venv venv && venv/bin/pip install -r requirements/docker.txt
 
-COPY app app
-# COPY migrations migrations
-COPY llm-api-connector.py config.py boot.sh ./
+# App-Dateien kopieren (mit Ownership direkt setzen)
+COPY --chown=flasky:flasky app app
+COPY --chown=flasky:flasky llm-api-connector.py config.py boot.sh ./
 
-RUN ls -ltra
+# Rechte setzen (noch root, oder direkt per COPY + Ausführbit gesetzt)
 RUN chmod 0750 boot.sh
 
-# run-time configuration
+# Optional: prüfen
+# RUN ls -l boot.sh
+
+# Wechsel zu nicht-root
+USER flasky
+
 EXPOSE 5000
 ENTRYPOINT ["./boot.sh"]
