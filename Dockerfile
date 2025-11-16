@@ -1,7 +1,10 @@
 FROM python:3.13-alpine
 
+# Runtime environment for production
 ENV FLASK_APP=llm-api-connector.py \
-    FLASK_CONFIG=production
+    FLASK_ENV=production \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 # User + Gruppe anlegen
 RUN addgroup -S flasky && adduser -S -G flasky flasky
