@@ -1,11 +1,7 @@
-from flask import Flask, request, g
+import click, unittest, sys, logging, time
 from config import get_config
-import click
-import unittest
-import sys
+from flask import Flask, request, g
 from flask_wtf.csrf import CSRFProtect
-import logging
-import time
 
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
