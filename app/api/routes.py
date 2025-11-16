@@ -50,7 +50,7 @@ def call_openai():
         REQUEST_COUNT.labels(method='POST', endpoint='/call_openai', status='200').inc()
         duration = time.time() - start_time
         logger.info("/call_openai succeeded in %.3fs (response_len=%d)", duration, len(result or ''))
-        if request.args.get('format') == 'text' or request.accept_mimetypes.best == 'text/plain':
+        if request.args.get('format') == 'text':
             return Response(result or "", status=200, mimetype='text/plain; charset=utf-8')
         return jsonify({'message': result})
         
@@ -95,7 +95,7 @@ def call_gemini():
         REQUEST_COUNT.labels(method='POST', endpoint='/call_gemini', status='200').inc()
         duration = time.time() - start_time
         logger.info("/call_gemini succeeded in %.3fs (response_len=%d)", duration, len(result or ''))
-        if request.args.get('format') == 'text' or request.accept_mimetypes.best == 'text/plain':
+        if request.args.get('format') == 'text':
             return Response(result or "", status=200, mimetype='text/plain; charset=utf-8')
         return jsonify({'message': result})
         
