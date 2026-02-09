@@ -1,0 +1,6 @@
+2026-02-09
+- Added root-level version.py for service metadata and container tagging.
+- Added CHANGELOG.log for version tracking.
+
+2026-01-01
+- Initial repository setup.
