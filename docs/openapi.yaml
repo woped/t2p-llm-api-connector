@@ -1,0 +1,155 @@
+openapi: 3.0.3
+info:
+  title: WOPED T2P LLM API Connector — Internal API
+  description: |
+    Internal HTTP API consumed by t2p-2.0. It accepts a process description
+    plus a provider/model selection, builds the prompt, dispatches the call to
+    the chosen LLM provider, and returns the raw provider response.
+
+    This spec is the machine-readable form of `docs/api-contract.md`; when the
+    two disagree, the markdown contract is authoritative. Note: this describes
+    the agreed `/generate` + `/models` contract for the API refactor, which the
+    service code does not fully implement yet.
+  version: 1.0.0
+  contact:
+    name: API Support
+servers:
+  - url: http://localhost:5000
+    description: Local development server
+
+paths:
+  /generate:
+    post:
+      summary: Generate a model from a process description
+      description: >-
+        Builds the prompt, dispatches the call to the selected provider/model,
+        and returns the raw provider response. The provider API key is supplied
+        in the Authorization header and never appears in the body.
+      operationId: generate
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateRequest'
+      responses:
+        '200':
+          description: Generation successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateResult'
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+
+  /models:
+    get:
+      summary: List available providers and models
+      operationId: models
+      responses:
+        '200':
+          description: Available models
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelsResponse'
+        '500':
+          $ref: '#/components/responses/Error'
+
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      operationId: metrics
+      responses:
+        '200':
+          description: Metrics in Prometheus text exposition format
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /_/_/echo:
+    get:
+      summary: Liveness echo
+      operationId: echo
+      responses:
+        '200':
+          description: Service is reachable
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "Provider API key, forwarded as `Authorization: Bearer <api_key>`."
+
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    GenerateRequest:
+      type: object
+      required: [user_text, provider, model]
+      properties:
+        user_text:
+          type: string
+          description: Natural-language process description.
+          example: "Start with a user request. Check inventory. If available, process the order; otherwise notify the user."
+        provider:
+          type: string
+          description: LLM provider; one of the values from GET /models.
+          example: openai
+        model:
+          type: string
+          description: Model name; one of the values from GET /models.
+          example: gpt-4o
+
+    GenerateResult:
+      type: object
+      properties:
+        raw_response:
+          type: string
+          description: The raw provider response.
+
+    ModelsResponse:
+      type: object
+      properties:
+        models:
+          type: array
+          items:
+            type: object
+            properties:
+              provider:
+                type: string
+                example: openai
+              model:
+                type: string
+                example: gpt-4o
+              default:
+                type: boolean
+                example: true
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              description: >-
+                Stable identifier. Known values: `invalid_request`,
+                `invalid_provider` (400); `upstream_error`, `internal_error` (500).
+              example: invalid_request
+            message:
+              type: string
+              example: "Missing or empty field(s): provider."

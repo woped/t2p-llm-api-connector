@@ -1,6 +1,8 @@
 # LLM API Connector — Internal API
 
-Internal HTTP API consumed by t2p-2.0.
+Internal HTTP API consumed by t2p-2.0. The machine-readable form of this
+contract is [`docs/openapi.yaml`](openapi.yaml); this document is authoritative
+where the two disagree.
 
 ## Endpoints
 
