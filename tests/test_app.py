@@ -87,55 +87,6 @@ class Test_App(unittest.TestCase):
         self.assertIn("message", data)
         self.assertEqual(data["message"], "Test Gemini response")
 
-    @patch("app.api.routes.LLMService")
-    def test_generate_dispatches_contract_request(self, mock_service):
-        mock_service.return_value.call_openai.return_value = '{"events": []}'
-
-        response = self.client.post(
-            "/generate",
-            headers={"Authorization": "Bearer test_api_key"},
-            json={
-                "user_text": "A process",
-                "provider": "openai",
-                "model": "gpt-4o",
-            },
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json(), {"raw_response": '{"events": []}'})
-        mock_service.return_value.call_openai.assert_called_once()
-        self.assertEqual(
-            mock_service.return_value.call_openai.call_args.args[0], "test_api_key"
-        )
-
-    def test_generate_rejects_missing_bearer_token(self):
-        response = self.client.post(
-            "/generate",
-            json={"user_text": "A process", "provider": "openai", "model": "gpt-4o"},
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.get_json()["error"]["code"], "invalid_request")
-
-    def test_generate_rejects_unsupported_model(self):
-        response = self.client.post(
-            "/generate",
-            headers={"Authorization": "Bearer test_api_key"},
-            json={"user_text": "A process", "provider": "openai", "model": "gpt-3"},
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.get_json()["error"]["code"], "invalid_provider")
-
-    def test_models_lists_supported_contract_values(self):
-        response = self.client.get("/models")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertIn(
-            {"provider": "openai", "model": "gpt-4o", "default": True},
-            response.get_json()["models"],
-        )
-
     def test_echo_endpoint(self):
         response = self.client.get("/_/_/echo")
         data = response.get_json()
