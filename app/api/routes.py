@@ -1,9 +1,12 @@
-import logging, time
+import logging
+import time
+
+from flask import Response, jsonify, request
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+
 from app.api import bp
 from app.services.llm_service import LLMService
 from config import get_config
-from flask import request, jsonify, Response
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
@@ -17,6 +20,94 @@ REQUEST_LATENCY = Histogram(
     "http_request_duration_seconds", "HTTP request latency", ["method", "endpoint"]
 )
 CALL_OPENAI_DURATION = Histogram("call_openai_duration_seconds", "OpenAI call duration")
+SUPPORTED_MODELS = [
+    {"provider": "openai", "model": "gpt-4o", "default": True},
+    {"provider": "gemini", "model": "gemini-1.5-pro", "default": False},
+]
+
+
+def _error_response(status_code, code, message):
+    return jsonify({"error": {"code": code, "message": message}}), status_code
+
+
+def _extract_bearer_token():
+    auth = request.headers.get("Authorization", "")
+    parts = auth.split()
+    if len(parts) == 2 and parts[0].lower() == "bearer" and parts[1]:
+        return parts[1]
+    return None
+
+
+@bp.route("/models", methods=["GET"])
+def models():
+    return jsonify({"models": SUPPORTED_MODELS}), 200
+
+
+@bp.route("/generate", methods=["POST"])
+def generate():
+    """Dispatch a contract-based generation request to a supported provider."""
+    start_time = time.time()
+    status = "200"
+    try:
+        api_key = _extract_bearer_token()
+        if api_key is None:
+            status = "400"
+            return _error_response(
+                400, "invalid_request", "Missing or malformed bearer token."
+            )
+
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            status = "400"
+            return _error_response(400, "invalid_request", "Request body must be JSON.")
+
+        missing = [
+            field for field in ("user_text", "provider", "model") if not data.get(field)
+        ]
+        if missing:
+            status = "400"
+            return _error_response(
+                400,
+                "invalid_request",
+                f"Missing or empty field(s): {', '.join(missing)}.",
+            )
+
+        supported = any(
+            item["provider"] == data["provider"] and item["model"] == data["model"]
+            for item in SUPPORTED_MODELS
+        )
+        if not supported:
+            status = "400"
+            return _error_response(
+                400,
+                "invalid_provider",
+                "Unsupported provider/model combination.",
+            )
+
+        config_instance = get_config()()
+        strategy = data.get("prompting_strategy", "few_shot")
+        service = LLMService()
+        if data["provider"] == "openai":
+            result = service.call_openai(
+                api_key, config_instance.SYSTEM_PROMPT, data["user_text"], strategy
+            )
+        else:
+            result = service.call_gemini(
+                api_key, config_instance.SYSTEM_PROMPT, data["user_text"], strategy
+            )
+        return jsonify({"raw_response": result}), 200
+    except ValueError as exc:
+        status = "400"
+        return _error_response(400, "invalid_request", str(exc))
+    except Exception:
+        status = "500"
+        logger.exception("/generate failed")
+        return _error_response(500, "upstream_error", "Provider request failed.")
+    finally:
+        REQUEST_COUNT.labels(method="POST", endpoint="/generate", status=status).inc()
+        REQUEST_LATENCY.labels(method="POST", endpoint="/generate").observe(
+            time.time() - start_time
+        )
 
 
 @bp.route("/call_openai", methods=["POST"])
