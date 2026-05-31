@@ -1,7 +1,8 @@
-import click, unittest, sys, logging, time
+import click, unittest, sys, logging, time, os
 from config import get_config
-from flask import Flask, request, g
+from flask import Flask, request, g, send_from_directory
 from flask_wtf.csrf import CSRFProtect
+from flask_swagger_ui import get_swaggerui_blueprint
 
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
@@ -40,6 +41,22 @@ def create_app(config_class=None):
 
     app.register_blueprint(api_bp)
     logger.info("Blueprints registered")
+
+    # Swagger UI  — served at /docs, spec sourced from /openapi.yaml
+    SWAGGER_URL = "/docs"
+    SPEC_URL = "/openapi.yaml"
+    swaggerui_bp = get_swaggerui_blueprint(
+        SWAGGER_URL,
+        SPEC_URL,
+        config={"app_name": "LLM API Connector"},
+    )
+    app.register_blueprint(swaggerui_bp, url_prefix=SWAGGER_URL)
+
+    _docs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "docs")
+
+    @app.route("/openapi.yaml")
+    def serve_openapi_yaml():
+        return send_from_directory(_docs_dir, "openapi.yaml")
 
     # Request logging
     @app.before_request
