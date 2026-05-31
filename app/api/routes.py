@@ -166,9 +166,9 @@ def generate():
     try:
         api_key = _extract_bearer_key()
         if api_key is None:
-            status = "400"
+            status = "401"
             return _v2_error(
-                400, "invalid_request", "Missing or malformed Authorization header."
+                401, "unauthorized", "Missing or malformed Authorization header."
             )
 
         data = request.get_json(silent=True)
@@ -213,9 +213,7 @@ def generate():
     except Exception as e:
         status = "500"
         logger.exception("/generate failed: %s", e)
-        return _v2_error(
-            500, "upstream_error", "The LLM provider call failed."
-        )
+        return _v2_error(500, "upstream_error", "The LLM provider call failed.")
     finally:
         REQUEST_COUNT.labels(method="POST", endpoint="/generate", status=status).inc()
         REQUEST_LATENCY.labels(method="POST", endpoint="/generate").observe(

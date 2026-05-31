@@ -48,7 +48,11 @@ class TestV2Api(unittest.TestCase):
         response = self.client.post(
             "/generate",
             headers={"Authorization": "Bearer secret-token"},
-            json={"user_text": "describe a process", "provider": "openai", "model": "gpt-4o"},
+            json={
+                "user_text": "describe a process",
+                "provider": "openai",
+                "model": "gpt-4o",
+            },
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {"raw_response": "RAW BPMN JSON"})
@@ -71,13 +75,13 @@ class TestV2Api(unittest.TestCase):
         self.assertEqual(response.get_json(), {"raw_response": "RAW GEMINI JSON"})
 
     # --- /generate validation --------------------------------------------
-    def test_generate_missing_bearer_is_400(self):
+    def test_generate_missing_bearer_is_401(self):
         response = self.client.post(
             "/generate",
             json={"user_text": "x", "provider": "openai", "model": "gpt-4o"},
         )
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.get_json()["error"]["code"], "invalid_request")
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.get_json()["error"]["code"], "unauthorized")
 
     def test_generate_missing_field_is_400(self):
         response = self.client.post(
