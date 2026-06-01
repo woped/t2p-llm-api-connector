@@ -1,4 +1,4 @@
-# llm-api-connector
+﻿# llm-api-connector
 
 This repository is for the source code handling the web-api call of llm providers as GPT from Open AI
 
@@ -44,7 +44,9 @@ export FLASK_DEBUG=1
 flask run
 ```
 
-This will start the Flask development server with auto-reloading enabled, and the application will be accessible at http://localhost:5000. 
+This will start the Flask development server with auto-reloading enabled, and the application will be accessible at http://localhost:5000.
+
+The interactive API documentation (Swagger UI) is available at http://localhost:5000/docs.
 
 > **Note:** In older versions of Flask, you might have used `FLASK_ENV=development`. However, since Flask 2.3 (and this project uses Flask 3.1+), `FLASK_ENV` has been removed. Setting `FLASK_DEBUG=1` is now the correct way to enable development mode.
 
