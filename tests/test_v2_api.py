@@ -114,6 +114,41 @@ class TestV2Api(unittest.TestCase):
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.get_json()["error"]["code"], "upstream_error")
 
+    @patch("app.services.llm_service.genai")
+    def test_generate_gemini_provider_error_is_500_upstream(self, mock_genai):
+        # The Gemini provider must map a provider-side failure to the same
+        # upstream_error 500 as OpenAI does (the OpenAI path is covered above;
+        # this closes the second-provider asymmetry).
+        mock_genai.GenerativeModel.return_value.generate_content.side_effect = (
+            RuntimeError("boom")
+        )
+        response = self.client.post(
+            "/generate",
+            headers={"Authorization": "Bearer secret-token"},
+            json={
+                "user_text": "x",
+                "provider": "gemini",
+                "model": "gemini-1.5-pro",
+            },
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.get_json()["error"]["code"], "upstream_error")
+
+    # --- /generate malformed body ----------------------------------------
+    def test_generate_non_json_body_is_400(self):
+        # A valid bearer token but a body that is not JSON must be rejected as
+        # invalid_request, distinct from the missing-field case.
+        response = self.client.post(
+            "/generate",
+            headers={
+                "Authorization": "Bearer secret-token",
+                "Content-Type": "text/plain",
+            },
+            data="this is not json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"]["code"], "invalid_request")
+
 
 if __name__ == "__main__":
     unittest.main()

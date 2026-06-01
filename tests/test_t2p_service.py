@@ -88,6 +88,20 @@ class TestT2PService(unittest.TestCase):
         expected_keywords = ["loan", "credit", "approve", "reject", "inform"]
         self.run_test_case(sentence, expected_keywords)
 
+    def test_generate_unknown_provider_raises(self):
+        # generate() is the provider-agnostic entry point; a provider with no
+        # dispatch mapping must raise rather than fail obscurely later. This
+        # guard protects internal/direct callers that bypass the route's
+        # registry validation.
+        with self.assertRaises(ValueError):
+            self.llm_service.generate(
+                api_key=self.api_key,
+                provider="bogus",
+                model="whatever",
+                user_text="x",
+                system_prompt=self.system_prompt,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
