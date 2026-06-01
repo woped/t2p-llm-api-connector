@@ -131,7 +131,7 @@ def call_gemini():
 #
 # t2p-2.0's ConnectorClient calls these two endpoints:
 #   POST <connector>/generate   body {user_text, provider, model}, Bearer auth
-#   GET  <connector>/models     -> {"models": [{provider, model, default}]}
+#   GET  <connector>/models     -> {"models": [{provider, model}]}
 # The error body shape is {"error": {"code": str, "message": str}} so t2p-2.0
 # can relay 4xx client errors unchanged.
 

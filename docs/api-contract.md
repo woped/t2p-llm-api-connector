@@ -38,5 +38,5 @@ Error codes: `invalid_request`, `invalid_provider` (400); `upstream_error`,
 ## `GET /models`
 
 ```
-Response 200: { "models": [{ "provider": string, "model": string, "default": bool }] }
+Response 200: { "models": [{ "provider": string, "model": string }] }
 ```

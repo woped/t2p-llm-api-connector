@@ -36,9 +36,8 @@ class TestV2Api(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertIn("models", data)
-        pairs = {(m["provider"], m["model"]): m["default"] for m in data["models"]}
+        pairs = {(m["provider"], m["model"]) for m in data["models"]}
         self.assertIn(("openai", "gpt-4o"), pairs)
-        self.assertTrue(pairs[("openai", "gpt-4o")])  # default
         self.assertIn(("gemini", "gemini-1.5-pro"), pairs)
 
     # --- /generate success ------------------------------------------------
