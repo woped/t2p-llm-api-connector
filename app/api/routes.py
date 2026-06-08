@@ -2,8 +2,7 @@ import logging, time
 from app.api import bp
 from app.services.llm_service import LLMService
 from app.services import model_registry
-from config import get_config
-from flask import request, jsonify
+from flask import request, jsonify, current_app
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 # Logging konfigurieren
@@ -17,6 +16,12 @@ REQUEST_COUNT = Counter(
 REQUEST_LATENCY = Histogram(
     "http_request_duration_seconds", "HTTP request latency", ["method", "endpoint"]
 )
+
+# Single, stateless LLMService instance shared across requests. Building it once
+# avoids re-reading and re-parsing the few-shot template file on every request
+# (the per-call provider clients are still created inside each call_* method,
+# keeping per-request API keys isolated).
+_llm_service = LLMService()
 
 
 # --- v2 contract API (consumed by t2p-2.0) --------------------------------
@@ -87,17 +92,15 @@ def generate():
                 f"Unknown provider/model: {provider}/{model}.",
             )
 
-        config_instance = get_config()()
-        llm_service = LLMService()
         logger.info(
             "Invoking LLMService.generate (provider=%s, model=%s)", provider, model
         )
-        raw_response = llm_service.generate(
+        raw_response = _llm_service.generate(
             api_key=api_key,
             provider=provider,
             model=model,
             user_text=data["user_text"],
-            system_prompt=config_instance.SYSTEM_PROMPT,
+            system_prompt=current_app.config["SYSTEM_PROMPT"],
             prompting_strategy=data.get("prompting_strategie", "few_shot"),
         )
         return jsonify({"raw_response": raw_response}), 200

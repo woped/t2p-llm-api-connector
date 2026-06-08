@@ -42,11 +42,5 @@ def setup_logging():
 setup_logging()
 app = create_app()
 
-
-@app.cli.command("test")
-def test():
-    """Run the unit tests."""
-    import unittest
-
-    tests = unittest.TestLoader().discover("tests")
-    unittest.TextTestRunner(verbosity=2).run(tests)
+# The ``flask test`` CLI command is registered in app/__init__.py (it reports a
+# non-zero exit code when tests fail); no duplicate registration here.

@@ -1,5 +1,8 @@
 import json
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 class PromptBuilder:
@@ -15,7 +18,7 @@ class PromptBuilder:
             with open(template_path, encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
-            print(f"Error loading few-shot templates: {e}")
+            logger.warning("Error loading few-shot templates: %s", e)
             return []
 
     def build_prompt(self, strategy, user_input):

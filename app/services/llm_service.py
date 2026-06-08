@@ -87,13 +87,13 @@ class LLMService:
 
         genai.configure(api_key=api_key)
 
-        model = genai.GenerativeModel(
+        gen_model = genai.GenerativeModel(
             model_name=model, system_instruction=system_prompt
         )
 
         try:
-            logger.info("Calling Gemini generate_content")
-            response = model.generate_content(
+            logger.info("Calling Gemini generate_content (model=%s)", model)
+            response = gen_model.generate_content(
                 prompt,
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.0, top_k=1, top_p=1.0, max_output_tokens=2048
