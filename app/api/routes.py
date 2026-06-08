@@ -101,7 +101,7 @@ def generate():
             model=model,
             user_text=data["user_text"],
             system_prompt=current_app.config["SYSTEM_PROMPT"],
-            prompting_strategy=data.get("prompting_strategie", "few_shot"),
+            prompting_strategy=data.get("prompting_strategy", "few_shot"),
         )
         return jsonify({"raw_response": raw_response}), 200
 

@@ -7,7 +7,7 @@ from app.utils.prompt_builder import PromptBuilder
 class TestPromptBuilder(unittest.TestCase):
     def test_unsupported_strategy_raises(self):
         # The strategy is caller-supplied (forwarded from /generate's
-        # 'prompting_strategie' field), so an unknown value must be rejected
+        # 'prompting_strategy' field), so an unknown value must be rejected
         # rather than silently producing an empty/garbage prompt.
         with self.assertRaises(ValueError):
             PromptBuilder().build_prompt("bogus_strategy", "describe a process")
