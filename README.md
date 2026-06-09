@@ -52,12 +52,23 @@ Example request body for `POST /generate`:
 {
   "user_text": "A customer submits an order. A clerk checks the inventory ...",
   "provider": "openai",
-  "model": "gpt-4o",
+  "model": "gpt-5.4-mini",
   "prompting_strategy": "few_shot"
 }
 ```
 
-Use `GET /models` to retrieve the list of supported provider/model pairs. See `docs/openapi.yaml` or the Swagger UI at `/docs` for the full API contract.
+### Supported models
+
+| Provider | Model | Notes |
+|----------|-------|-------|
+| `openai` | `gpt-5.5` | Newest general-purpose standard model |
+| `openai` | `gpt-5.4-mini` | Cost-effective, recommended default |
+| `openai` | `gpt-5.4-nano` | Cheapest, high-volume / low-latency |
+| `openai` | `gpt-4o` | Legacy — kept for backward compatibility |
+| `gemini` | `gemini-3.5-flash` | Newest flash tier, best price/performance |
+| `gemini` | `gemini-3.1-flash-lite` | Cheapest, high-volume / low-latency |
+
+Use `GET /models` to retrieve the current list at runtime. See `docs/openapi.yaml` or the Swagger UI at `/docs` for the full API contract.
 
 ## Running the Application with Docker
 
