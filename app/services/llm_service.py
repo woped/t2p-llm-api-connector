@@ -23,6 +23,11 @@ class LLMService:
         ``model`` defaults to ``gpt-4o`` so existing (v1) callers and tests keep
         working; the v2 ``/generate`` flow passes the model selected from the
         registry.
+
+        The GPT-5.x generation rejects ``temperature`` and ``max_tokens`` and
+        expects ``max_completion_tokens`` instead, whereas ``gpt-4o`` still uses
+        the classic parameters. We branch on the model name so both work through
+        the same dispatch.
         """
         if not user_text:
             logger.warning("call_openai: empty user_text provided")
@@ -37,17 +42,24 @@ class LLMService:
         )
         client = OpenAI(api_key=api_key)
 
+        request_params = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        # GPT-5.x (and the o-series) reject `temperature`/`max_tokens` and use
+        # `max_completion_tokens`; older models (gpt-4o) keep the classic params.
+        if model.startswith("gpt-5") or model.startswith("o"):
+            request_params["max_completion_tokens"] = 4096
+        else:
+            request_params["temperature"] = 0
+            request_params["max_tokens"] = 4096
+
         try:
             logger.info("Calling OpenAI chat.completions (model=%s)", model)
-            chat_completion = client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0,
-                model=model,
-                max_tokens=4096,
-            )
+            chat_completion = client.chat.completions.create(**request_params)
             content = chat_completion.choices[0].message.content or ""
             duration = time.time() - start_time
             logger.info(
@@ -66,12 +78,13 @@ class LLMService:
         system_prompt,
         user_text,
         prompting_strategy,
-        model="gemini-1.5-pro",
+        model="gemini-3.5-flash",
     ):
         """Call Google Gemini model.
 
-        ``model`` defaults to ``gemini-1.5-pro`` for backward compatibility; the
-        v2 ``/generate`` flow passes the model selected from the registry.
+        ``model`` defaults to ``gemini-3.5-flash`` (the current standard flash
+        tier); the v2 ``/generate`` flow passes the model selected from the
+        registry.
         """
         if not user_text:
             logger.warning("call_gemini: empty user_text provided")
