@@ -102,7 +102,9 @@ class TestV2Api(unittest.TestCase):
 
     # --- /generate upstream failure --------------------------------------
     @patch("app.services.llm_service.OpenAI")
-    def test_generate_provider_error_is_500_upstream(self, mock_openai):
+    def test_generate_provider_error_is_502_upstream(self, mock_openai):
+        # A provider error with no recognisable status maps to 502, and the
+        # real upstream error text is passed through as the message.
         mock_openai.return_value.responses.create.side_effect = RuntimeError(
             "boom"
         )
@@ -111,13 +113,15 @@ class TestV2Api(unittest.TestCase):
             headers={"Authorization": "Bearer secret-token"},
             json={"user_text": "x", "provider": "openai", "model": "gpt-4o"},
         )
-        self.assertEqual(response.status_code, 500)
-        self.assertEqual(response.get_json()["error"]["code"], "upstream_error")
+        self.assertEqual(response.status_code, 502)
+        error = response.get_json()["error"]
+        self.assertEqual(error["code"], "upstream_error")
+        self.assertEqual(error["message"], "boom")
 
     @patch("app.services.llm_service.genai")
-    def test_generate_gemini_provider_error_is_500_upstream(self, mock_genai):
+    def test_generate_gemini_provider_error_is_502_upstream(self, mock_genai):
         # The Gemini provider must map a provider-side failure to the same
-        # upstream_error 500 as OpenAI does (the OpenAI path is covered above;
+        # upstream_error 502 as OpenAI does (the OpenAI path is covered above;
         # this closes the second-provider asymmetry).
         mock_genai.Client.return_value.models.generate_content.side_effect = (
             RuntimeError("boom")
@@ -131,8 +135,27 @@ class TestV2Api(unittest.TestCase):
                 "model": "gemini-3.5-flash",
             },
         )
-        self.assertEqual(response.status_code, 500)
-        self.assertEqual(response.get_json()["error"]["code"], "upstream_error")
+        self.assertEqual(response.status_code, 502)
+        error = response.get_json()["error"]
+        self.assertEqual(error["code"], "upstream_error")
+        self.assertEqual(error["message"], "boom")
+
+    @patch("app.services.llm_service.OpenAI")
+    def test_generate_rate_limit_is_passed_through_as_429(self, mock_openai):
+        # A 429 from the provider is retryable, so the connector mirrors it
+        # instead of collapsing it to 502.
+        exc = RuntimeError("rate limited")
+        exc.status_code = 429
+        mock_openai.return_value.responses.create.side_effect = exc
+        response = self.client.post(
+            "/generate",
+            headers={"Authorization": "Bearer secret-token"},
+            json={"user_text": "x", "provider": "openai", "model": "gpt-4o"},
+        )
+        self.assertEqual(response.status_code, 429)
+        error = response.get_json()["error"]
+        self.assertEqual(error["code"], "upstream_error")
+        self.assertEqual(error["message"], "rate limited")
 
     # --- /generate malformed body ----------------------------------------
     def test_generate_non_json_body_is_400(self):

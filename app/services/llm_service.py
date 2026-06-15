@@ -13,6 +13,31 @@ logger = logging.getLogger(__name__)
 _MAX_OUTPUT_TOKENS = 4096
 
 
+class ProviderError(Exception):
+    """Raised when an upstream LLM provider (OpenAI / Google) call fails.
+
+    Carries the provider's own error text (via ``str``) and, when the SDK
+    exposes it, the upstream HTTP status — enough for the calling service to
+    debug the failure and react (e.g. retry on 429).
+    """
+
+    def __init__(self, message, upstream_status=None):
+        self.upstream_status = upstream_status  # int HTTP status, if known
+        super().__init__(message)
+
+
+def _upstream_status(exc):
+    """Best-effort upstream HTTP status from an SDK exception, else None.
+
+    The OpenAI SDK exposes an int ``status_code``; the google-genai SDK exposes
+    an int ``code``. Returns None when neither is a usable int.
+    """
+    status = getattr(exc, "status_code", None)
+    if status is None and isinstance(getattr(exc, "code", None), int):
+        status = exc.code
+    return status if isinstance(status, int) else None
+
+
 class LLMService:
     """Service class for handling LLM API calls"""
 
@@ -82,7 +107,7 @@ class LLMService:
             return content.strip()
         except Exception as e:
             logger.exception("OpenAI call failed: %s", e)
-            raise
+            raise ProviderError(str(e), _upstream_status(e)) from e
 
     def call_gemini(
         self,
@@ -136,7 +161,7 @@ class LLMService:
             return text.strip()
         except Exception as e:
             logger.exception("Gemini call failed: %s", e)
-            raise
+            raise ProviderError(str(e), _upstream_status(e)) from e
 
     def generate(self, api_key, provider, model, user_text, system_prompt,
                  prompting_strategy="few_shot"):

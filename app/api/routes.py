@@ -1,6 +1,6 @@
 import logging, time
 from app.api import bp
-from app.services.llm_service import LLMService
+from app.services.llm_service import LLMService, ProviderError
 from app.services import model_registry
 from flask import request, jsonify, current_app
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
@@ -105,10 +105,19 @@ def generate():
         )
         return jsonify({"raw_response": raw_response}), 200
 
+    except ProviderError as e:
+        # The upstream provider (OpenAI / Google) rejected or failed the call.
+        # Forward its real error text and mirror the upstream status so the
+        # calling service can debug and react (429 is retryable; otherwise it is
+        # a bad-gateway condition). The traceback is already logged in the
+        # service layer.
+        http_status = 429 if e.upstream_status == 429 else 502
+        status = str(http_status)
+        return _v2_error(http_status, "upstream_error", str(e))
     except Exception as e:
         status = "500"
         logger.exception("/generate failed: %s", e)
-        return _v2_error(500, "upstream_error", "The LLM provider call failed.")
+        return _v2_error(500, "internal_error", "An unexpected error occurred.")
     finally:
         REQUEST_COUNT.labels(method="POST", endpoint="/generate", status=status).inc()
         REQUEST_LATENCY.labels(method="POST", endpoint="/generate").observe(

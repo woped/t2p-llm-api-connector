@@ -41,6 +41,10 @@ paths:
                 $ref: '#/components/schemas/GenerateResult'
         '400':
           $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
 
@@ -148,8 +152,13 @@ components:
               type: string
               description: >-
                 Stable identifier. Known values: `invalid_request`,
-                `invalid_provider` (400); `upstream_error`, `internal_error` (500).
+                `invalid_provider` (400); `upstream_error` (429 retryable / 502
+                bad gateway — the `message` carries the provider's own error
+                text); `internal_error` (500).
               example: invalid_request
             message:
               type: string
+              description: >-
+                Human-readable detail. For `upstream_error` this is the raw
+                error text returned by the LLM provider.
               example: "Missing or empty field(s): provider."
