@@ -1,6 +1,6 @@
-# llm-api-connector
+﻿# llm-api-connector
 
-This repository is for the source code handling the web-api call of llm providers as GPT from Open AI
+HTTP connector service that proxies process-description text to LLM providers (OpenAI, Google Gemini) and returns the raw model response. Consumed by the t2p-2.0 backend.
 
 ## Prerequisites
 
@@ -28,25 +28,36 @@ After cloning this repository, it's essential to [set up git hooks](https://gith
 
 ## Running the Application Locally
 
-To run the Flask application in development mode, make sure your `.venv` is activated and set the necessary environment variables:
+A `.flaskenv` file in the project root already sets `FLASK_APP` and the environment, so activating the venv and running `flask run` is enough:
 
-**Windows (PowerShell):**
-```powershell
-$env:FLASK_APP = "llm-api-connector.py"
-$env:FLASK_DEBUG = "1"
-flask run
-```
-
-**macOS/Linux:**
 ```bash
-export FLASK_APP=llm-api-connector.py
-export FLASK_DEBUG=1
 flask run
 ```
 
-This will start the Flask development server with auto-reloading enabled, and the application will be accessible at http://localhost:5000. 
+The application will be accessible at http://localhost:5000.  
+The interactive API documentation (Swagger UI) is available at http://localhost:5000/docs.
 
-> **Note:** In older versions of Flask, you might have used `FLASK_ENV=development`. However, since Flask 2.3 (and this project uses Flask 3.1+), `FLASK_ENV` has been removed. Setting `FLASK_DEBUG=1` is now the correct way to enable development mode.
+> **Note:** `FLASK_ENV` is still used by this project's `config.py` to select the active configuration class (`development` / `production` / `testing`). It is separate from Flask's own debug flag and is already pre-configured in `.flaskenv` for local development — no manual export is needed.
+
+## Calling the API
+
+All requests to `/generate` require the provider API key as a Bearer token in the `Authorization` header — it is never part of the request body:
+
+```
+Authorization: Bearer <your-provider-api-key>
+```
+
+Example request body for `POST /generate`:
+```json
+{
+  "user_text": "A customer submits an order. A clerk checks the inventory ...",
+  "provider": "openai",
+  "model": "gpt-4o",
+  "prompting_strategy": "few_shot"
+}
+```
+
+Use `GET /models` to retrieve the list of supported provider/model pairs. See `docs/openapi.yaml` or the Swagger UI at `/docs` for the full API contract.
 
 ## Running the Application with Docker
 
@@ -62,9 +73,11 @@ docker run -p 5000:5000 llm-api-connector
 The application will be accessible at http://localhost:5000.
 
 ## Testing
-To test the code, navigate to the test folder and run the following command:
+
+Run the following commands from the **project root** (not the `tests` folder — the test suite needs to resolve the `app` package):
+
 ```bash
-coverage run -m unittest discover
+coverage run -m unittest discover -s tests
 ```
 You can then view the coverage report by running:
 ```bash

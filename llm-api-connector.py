@@ -5,12 +5,14 @@ from pythonjsonlogger import jsonlogger
 
 class MetricsFilter(logging.Filter):
     """Filter to exclude metrics endpoints from logs"""
+
     def filter(self, record):
         if record.name == "werkzeug":
             return "/metrics" not in record.getMessage()
         try:
             from flask import request
-            return not request.path.startswith('/metrics')
+
+            return not request.path.startswith("/metrics")
         except RuntimeError:
             return True
 
@@ -19,21 +21,20 @@ def setup_logging():
     """Setup logging configuration"""
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
-    
-    werkzeug_logger = logging.getLogger('werkzeug')
+
+    werkzeug_logger = logging.getLogger("werkzeug")
     werkzeug_logger.setLevel(logging.INFO)
-    
+
     metrics_filter = MetricsFilter()
-    
+
     console_handler = logging.StreamHandler()
     console_handler.addFilter(metrics_filter)
-    
+
     console_formatter = jsonlogger.JsonFormatter(
-        '%(asctime)s %(levelname)s %(name)s %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+        "%(asctime)s %(levelname)s %(name)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
     )
     console_handler.setFormatter(console_formatter)
-    
+
     logger.addHandler(console_handler)
     werkzeug_logger.addHandler(console_handler)
 
@@ -41,9 +42,5 @@ def setup_logging():
 setup_logging()
 app = create_app()
 
-@app.cli.command("test")
-def test():
-    """Run the unit tests."""
-    import unittest
-    tests = unittest.TestLoader().discover('tests')
-    unittest.TextTestRunner(verbosity=2).run(tests)
+# The ``flask test`` CLI command is registered in app/__init__.py (it reports a
+# non-zero exit code when tests fail); no duplicate registration here.
