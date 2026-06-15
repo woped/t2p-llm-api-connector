@@ -38,7 +38,7 @@ class TestV2Api(unittest.TestCase):
         self.assertIn("models", data)
         pairs = {(m["provider"], m["model"]) for m in data["models"]}
         self.assertIn(("openai", "gpt-4o"), pairs)
-        self.assertIn(("gemini", "gemini-1.5-pro"), pairs)
+        self.assertIn(("gemini", "gemini-3.5-flash"), pairs)
 
     # --- /generate success ------------------------------------------------
     @patch("app.services.llm_service.OpenAI")
@@ -67,7 +67,7 @@ class TestV2Api(unittest.TestCase):
             json={
                 "user_text": "describe a process",
                 "provider": "gemini",
-                "model": "gemini-1.5-pro",
+                "model": "gemini-3.5-flash",
             },
         )
         self.assertEqual(response.status_code, 200)
@@ -128,7 +128,7 @@ class TestV2Api(unittest.TestCase):
             json={
                 "user_text": "x",
                 "provider": "gemini",
-                "model": "gemini-1.5-pro",
+                "model": "gemini-3.5-flash",
             },
         )
         self.assertEqual(response.status_code, 500)

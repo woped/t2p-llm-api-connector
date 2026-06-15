@@ -11,9 +11,27 @@ list and the accepted list can never drift apart.
 """
 
 # Each entry: provider key -> list of supported model names.
+#
+# We list the current GPT-5.x / Gemini-3.x generations, but deliberately stay on
+# the cost-effective *standard* tiers (mini / nano / flash) rather than the
+# flagship Pro tiers, which are far more expensive than this connector's
+# process-description workload needs. ``gpt-4o`` is the only legacy model kept,
+# purely for backward compatibility.
+#
+# NOTE: the GPT-5.x models reject ``temperature`` and ``max_tokens`` and require
+# ``max_completion_tokens`` instead; ``LLMService.call_openai`` handles that
+# parameter split, so every model below works with the live dispatch.
 _REGISTRY = {
-    "openai": ["gpt-4o"],
-    "gemini": ["gemini-1.5-pro"],
+    "openai": [
+        "gpt-5.5",  # newest general-purpose standard model
+        "gpt-5.4-mini",  # cost-effective, recommended default for this workload
+        "gpt-5.4-nano",  # cheapest, high-volume / low-latency
+        "gpt-4o",  # legacy, kept for backward compatibility
+    ],
+    "gemini": [
+        "gemini-3.5-flash",  # newest flash tier, best price/performance
+        "gemini-3.1-flash-lite",  # cheapest, high-volume / low-latency
+    ],
 }
 
 # Maps a provider to the LLMService method name that dispatches the call.
