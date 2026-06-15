@@ -64,6 +64,30 @@ class LLMService:
         )
         return prompt, start_time
 
+    def _finish(self, provider, text, start_time):
+        """Normalise a successful response and log its timing.
+
+        Single source for the ``or ""`` + ``strip()`` and the duration log,
+        shared by both provider methods.
+        """
+        text = (text or "").strip()
+        logger.info(
+            "%s response received in %.3fs (len=%d)",
+            provider,
+            time.time() - start_time,
+            len(text),
+        )
+        return text
+
+    def _fail(self, provider, exc):
+        """Log the traceback and build a ProviderError for the failed call.
+
+        Call sites raise the returned error with ``from exc`` to keep the cause
+        chain intact.
+        """
+        logger.exception("%s call failed: %s", provider, exc)
+        return ProviderError(str(exc), _upstream_status(exc))
+
     def call_openai(
         self, api_key, system_prompt, user_text, prompting_strategy, model="gpt-4o"
     ):
@@ -81,7 +105,7 @@ class LLMService:
         registry.
         """
         prompt, start_time = self._prepare(
-            "call_openai", prompting_strategy, user_text, model
+            "openai", prompting_strategy, user_text, model
         )
         client = OpenAI(api_key=api_key)
 
@@ -97,17 +121,9 @@ class LLMService:
         try:
             logger.info("Calling OpenAI responses.create (model=%s)", model)
             response = client.responses.create(**request_params)
-            content = response.output_text or ""
-            duration = time.time() - start_time
-            logger.info(
-                "OpenAI response received in %.3fs (len=%d)",
-                duration,
-                len(content),
-            )
-            return content.strip()
+            return self._finish("openai", response.output_text, start_time)
         except Exception as e:
-            logger.exception("OpenAI call failed: %s", e)
-            raise ProviderError(str(e), _upstream_status(e)) from e
+            raise self._fail("openai", e) from e
 
     def call_gemini(
         self,
@@ -130,38 +146,35 @@ class LLMService:
         registry.
         """
         prompt, start_time = self._prepare(
-            "call_gemini", prompting_strategy, user_text, model
+            "gemini", prompting_strategy, user_text, model
         )
-
         client = genai.Client(api_key=api_key)
 
-        config_kwargs = {
+        # Gemini nests the generation settings in a `config` object (the only
+        # structural difference from OpenAI's flat params); everything else
+        # follows the same build-request_params-then-call(**request_params)
+        # pattern.
+        config = {
             "system_instruction": system_prompt,
             "max_output_tokens": _MAX_OUTPUT_TOKENS,
         }
         if model_registry.supports_temperature("gemini", model):
-            config_kwargs["temperature"] = 0.0
-            config_kwargs["top_k"] = 1
-            config_kwargs["top_p"] = 1.0
+            config["temperature"] = 0.0
+            config["top_k"] = 1
+            config["top_p"] = 1.0
+
+        request_params = {
+            "model": model,
+            "contents": prompt,
+            "config": genai.types.GenerateContentConfig(**config),
+        }
 
         try:
             logger.info("Calling Gemini generate_content (model=%s)", model)
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=genai.types.GenerateContentConfig(**config_kwargs),
-            )
-            text = (response.text or "") if hasattr(response, "text") else ""
-            duration = time.time() - start_time
-            logger.info(
-                "Gemini response received in %.3fs (len=%d)",
-                duration,
-                len(text),
-            )
-            return text.strip()
+            response = client.models.generate_content(**request_params)
+            return self._finish("gemini", response.text, start_time)
         except Exception as e:
-            logger.exception("Gemini call failed: %s", e)
-            raise ProviderError(str(e), _upstream_status(e)) from e
+            raise self._fail("gemini", e) from e
 
     def generate(self, api_key, provider, model, user_text, system_prompt,
                  prompting_strategy="few_shot"):
