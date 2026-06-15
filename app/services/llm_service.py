@@ -1,12 +1,16 @@
 import logging
 import time
 from openai import OpenAI
-import google.generativeai as genai
+from google import genai
 from app.utils.prompt_builder import PromptBuilder
 from app.services import model_registry
 
 
 logger = logging.getLogger(__name__)
+
+# Upper bound on generated tokens, shared by both providers so the output budget
+# is consistent regardless of which model handles the request.
+_MAX_OUTPUT_TOKENS = 4096
 
 
 class LLMService:
@@ -15,52 +19,60 @@ class LLMService:
     def __init__(self):
         self.prompt_builder = PromptBuilder()
 
-    def call_openai(
-        self, api_key, system_prompt, user_text, prompting_strategy, model="gpt-4o"
-    ):
-        """Call OpenAI GPT model.
+    def _prepare(self, provider, prompting_strategy, user_text, model):
+        """Build the prompt and emit the shared pre-call logging.
 
-        ``model`` defaults to ``gpt-4o`` so existing (v1) callers and tests keep
-        working; the v2 ``/generate`` flow passes the model selected from the
-        registry.
-
-        The GPT-5.x generation rejects ``temperature`` and ``max_tokens`` and
-        expects ``max_completion_tokens`` instead, whereas ``gpt-4o`` still uses
-        the classic parameters. We branch on the model name so both work through
-        the same dispatch.
+        Returns ``(prompt, start_time)``. Factored out so both provider methods
+        share identical input handling, logging and timing.
         """
         if not user_text:
-            logger.warning("call_openai: empty user_text provided")
+            logger.warning("%s: empty user_text provided", provider)
         start_time = time.time()
         prompt = self.prompt_builder.build_prompt(prompting_strategy, user_text)
         logger.debug(
-            "call_openai: strategy=%s, model=%s, user_text_len=%d, prompt_len=%d",
+            "%s: strategy=%s, model=%s, user_text_len=%d, prompt_len=%d",
+            provider,
             prompting_strategy,
             model,
             len(user_text or ""),
             len(prompt or ""),
         )
+        return prompt, start_time
+
+    def call_openai(
+        self, api_key, system_prompt, user_text, prompting_strategy, model="gpt-4o"
+    ):
+        """Call an OpenAI model via the Responses API.
+
+        Uses ``client.responses.create`` — the interface OpenAI now recommends
+        for new projects — rather than the legacy Chat Completions endpoint. The
+        Responses API unifies the output-token parameter as ``max_output_tokens``
+        for every model, so the only model-dependent knob left is ``temperature``:
+        GPT-5.x / o-series reasoning models reject it, while ``gpt-4o`` accepts
+        it. That capability comes from the registry instead of a name heuristic.
+
+        ``model`` defaults to ``gpt-4o`` so existing (v1) callers and tests keep
+        working; the v2 ``/generate`` flow passes the model selected from the
+        registry.
+        """
+        prompt, start_time = self._prepare(
+            "call_openai", prompting_strategy, user_text, model
+        )
         client = OpenAI(api_key=api_key)
 
         request_params = {
             "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
+            "instructions": system_prompt,
+            "input": prompt,
+            "max_output_tokens": _MAX_OUTPUT_TOKENS,
         }
-        # GPT-5.x (and the o-series) reject `temperature`/`max_tokens` and use
-        # `max_completion_tokens`; older models (gpt-4o) keep the classic params.
-        if model.startswith("gpt-5") or model.startswith("o"):
-            request_params["max_completion_tokens"] = 4096
-        else:
+        if model_registry.supports_temperature("openai", model):
             request_params["temperature"] = 0
-            request_params["max_tokens"] = 4096
 
         try:
-            logger.info("Calling OpenAI chat.completions (model=%s)", model)
-            chat_completion = client.chat.completions.create(**request_params)
-            content = chat_completion.choices[0].message.content or ""
+            logger.info("Calling OpenAI responses.create (model=%s)", model)
+            response = client.responses.create(**request_params)
+            content = response.output_text or ""
             duration = time.time() - start_time
             logger.info(
                 "OpenAI response received in %.3fs (len=%d)",
@@ -80,37 +92,39 @@ class LLMService:
         prompting_strategy,
         model="gemini-3.5-flash",
     ):
-        """Call Google Gemini model.
+        """Call a Google Gemini model via the unified ``google-genai`` SDK.
+
+        Uses a per-call ``genai.Client(api_key=...)`` instead of the deprecated
+        ``google-generativeai`` SDK's global ``genai.configure(...)``. The old
+        global configuration was process-wide mutable state: under concurrent
+        requests carrying different API keys it was a race condition. A
+        per-request client isolates each call's credentials.
 
         ``model`` defaults to ``gemini-3.5-flash`` (the current standard flash
         tier); the v2 ``/generate`` flow passes the model selected from the
         registry.
         """
-        if not user_text:
-            logger.warning("call_gemini: empty user_text provided")
-        start_time = time.time()
-        prompt = self.prompt_builder.build_prompt(prompting_strategy, user_text)
-        logger.debug(
-            "call_gemini: strategy=%s, model=%s, user_text_len=%d, prompt_len=%d",
-            prompting_strategy,
-            model,
-            len(user_text or ""),
-            len(prompt or ""),
+        prompt, start_time = self._prepare(
+            "call_gemini", prompting_strategy, user_text, model
         )
 
-        genai.configure(api_key=api_key)
+        client = genai.Client(api_key=api_key)
 
-        gen_model = genai.GenerativeModel(
-            model_name=model, system_instruction=system_prompt
-        )
+        config_kwargs = {
+            "system_instruction": system_prompt,
+            "max_output_tokens": _MAX_OUTPUT_TOKENS,
+        }
+        if model_registry.supports_temperature("gemini", model):
+            config_kwargs["temperature"] = 0.0
+            config_kwargs["top_k"] = 1
+            config_kwargs["top_p"] = 1.0
 
         try:
             logger.info("Calling Gemini generate_content (model=%s)", model)
-            response = gen_model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.0, top_k=1, top_p=1.0, max_output_tokens=2048
-                ),
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=genai.types.GenerateContentConfig(**config_kwargs),
             )
             text = (response.text or "") if hasattr(response, "text") else ""
             duration = time.time() - start_time

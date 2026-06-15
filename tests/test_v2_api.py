@@ -17,18 +17,18 @@ class TestV2Api(unittest.TestCase):
 
     # --- helpers ----------------------------------------------------------
     def _mock_openai(self, mock_openai, content="RAW BPMN JSON"):
-        mock_choice = MagicMock()
-        mock_choice.message.content = content
-        mock_completion = MagicMock()
-        mock_completion.choices = [mock_choice]
-        mock_openai.return_value.chat.completions.create.return_value = mock_completion
+        # Responses API: client.responses.create(...).output_text
+        mock_response = MagicMock()
+        mock_response.output_text = content
+        mock_openai.return_value.responses.create.return_value = mock_response
 
     def _mock_gemini(self, mock_genai, content="RAW GEMINI JSON"):
+        # google-genai SDK: genai.Client(...).models.generate_content(...).text
         mock_response = MagicMock()
         mock_response.text = content
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = mock_response
-        mock_genai.GenerativeModel.return_value = mock_model
+        mock_genai.Client.return_value.models.generate_content.return_value = (
+            mock_response
+        )
 
     # --- /models ----------------------------------------------------------
     def test_models_returns_registry(self):
@@ -103,7 +103,7 @@ class TestV2Api(unittest.TestCase):
     # --- /generate upstream failure --------------------------------------
     @patch("app.services.llm_service.OpenAI")
     def test_generate_provider_error_is_500_upstream(self, mock_openai):
-        mock_openai.return_value.chat.completions.create.side_effect = RuntimeError(
+        mock_openai.return_value.responses.create.side_effect = RuntimeError(
             "boom"
         )
         response = self.client.post(
@@ -119,7 +119,7 @@ class TestV2Api(unittest.TestCase):
         # The Gemini provider must map a provider-side failure to the same
         # upstream_error 500 as OpenAI does (the OpenAI path is covered above;
         # this closes the second-provider asymmetry).
-        mock_genai.GenerativeModel.return_value.generate_content.side_effect = (
+        mock_genai.Client.return_value.models.generate_content.side_effect = (
             RuntimeError("boom")
         )
         response = self.client.post(

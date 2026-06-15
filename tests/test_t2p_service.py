@@ -34,18 +34,15 @@ class TestT2PService(unittest.TestCase):
     def run_test_case(self, sentence, expected_keywords, mock_openai):
         for strategy in self.strategies:
             with self.subTest(strategy=strategy):
-                # Setup mock
-                mock_response = self.create_mock_response(
+                # Setup mock — Responses API: responses.create(...).output_text
+                response_text = self.create_mock_response(
                     sentence, expected_keywords, strategy
                 )
-                mock_choice = MagicMock()
-                mock_choice.message.content = mock_response
+                mock_response = MagicMock()
+                mock_response.output_text = response_text
 
-                mock_completion = MagicMock()
-                mock_completion.choices = [mock_choice]
-
-                mock_openai.return_value.chat.completions.create.return_value = (
-                    mock_completion
+                mock_openai.return_value.responses.create.return_value = (
+                    mock_response
                 )
 
                 # Run test
