@@ -32,6 +32,8 @@ Body: {
 Response 200: { "raw_response": string }
 Response 400: { "error": { "code": string, "message": string } }
 Response 401: { "error": { "code": string, "message": string } }
+Response 429: { "error": { "code": string, "message": string } }
+Response 502: { "error": { "code": string, "message": string } }
 Response 500: { "error": { "code": string, "message": string } }
 ```
 
@@ -40,9 +42,10 @@ prompt, dispatches the call to the selected `provider`/`model`, and returns the 
 provider response.
 
 Error codes: `invalid_request`, `invalid_provider` (400); `unauthorized` (401);
-`upstream_error`, `internal_error` (500). A missing or malformed `Authorization`
-header returns `401 unauthorized`; a non-JSON body or a missing/empty required
-field returns `400 invalid_request`.
+`upstream_error` (429 retryable / 502 bad gateway — the `message` carries the
+provider's own error text); `internal_error` (500). A missing or malformed
+`Authorization` header returns `401 unauthorized`; a non-JSON body or a
+missing/empty required field returns `400 invalid_request`.
 
 ## `GET /models`
 

@@ -99,7 +99,7 @@ class LLMService:
         system_prompt,
         user_text,
         prompting_strategy,
-        model="gpt-4o",
+        model="gpt-5.4-mini",
         temperature=0.0,
     ):
         """Call an OpenAI model via the Responses API with Structured Outputs.
@@ -124,9 +124,9 @@ class LLMService:
         Returns ``response.output_text`` — the raw JSON string — so the calling
         service keeps receiving a string it can hand on unchanged.
 
-        ``model`` defaults to ``gpt-4o`` so existing (v1) callers and tests keep
-        working; the v2 ``/generate`` flow passes the model selected from the
-        registry.
+        ``model`` defaults to ``gpt-5.4-mini`` — the registry's recommended
+        default — for direct (v1) callers and tests; the v2 ``/generate`` flow
+        passes the model selected from the registry.
         """
         prompt, start_time = self._prepare(
             "openai", prompting_strategy, user_text, model

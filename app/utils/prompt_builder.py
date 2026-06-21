@@ -33,7 +33,7 @@ class PromptBuilder:
             return "\n".join(sections)
 
         elif strategy == "zero_shot":
-            return f"Please generate a BPMN model for the following description:\n\n{user_input}\n\nBPMN:"
+            return f"Please generate the BPMN-JSON model for the following process description:\n\n{user_input}\n\nBPMN:"
 
         else:
             raise ValueError(f"Unsupported prompting strategy: {strategy}")
