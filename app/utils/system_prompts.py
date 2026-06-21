@@ -43,6 +43,9 @@ Tasks/Activities:
 Gateways (Splitting/Joining Points):
 - Exclusive Gateways: Describe any points within the process where the flow can ONLY go in ONE direction.
 - Parallel Gateways: Describe any points within the process where the flow MUST go in MULTIPLE directions.
+- ONLY these two gateway types are allowed: "exclusiveGateway" (XOR) and "parallelGateway" (AND).
+- NEVER use inclusive/OR gateways, event-based gateways, or complex gateways - they cannot be processed. If a step can lead to one or more of several paths, model it explicitly with exclusiveGateway and/or parallelGateway.
+- Every split (a point where the flow diverges into multiple paths) MUST go through an explicit gateway. A task or event must NEVER have more than one outgoing flow - place a gateway there and make clear whether it is exclusive (XOR) or parallel (AND).
 
 Flows:
 - Sequence Flows: Detail all sequence flows, explaining how tasks and events are interconnected. 
