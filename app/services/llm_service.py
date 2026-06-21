@@ -90,7 +90,13 @@ class LLMService:
         return ProviderError(str(exc), _upstream_status(exc))
 
     def call_openai(
-        self, api_key, system_prompt, user_text, prompting_strategy, model="gpt-4o"
+        self,
+        api_key,
+        system_prompt,
+        user_text,
+        prompting_strategy,
+        model="gpt-4o",
+        temperature=0.0,
     ):
         """Call an OpenAI model via the Responses API with Structured Outputs.
 
@@ -106,6 +112,10 @@ class LLMService:
         left is ``temperature``: GPT-5.x / o-series reasoning models reject it,
         while ``gpt-4o`` accepts it. That capability comes from the registry
         instead of a name heuristic.
+
+        ``temperature`` defaults to ``0.0`` (deterministic). The retry loop
+        passes a small non-zero value on regeneration so a failed attempt is
+        not reproduced verbatim; it is only applied when the model accepts it.
 
         Returns ``response.output_text`` — the raw JSON string — so the calling
         service keeps receiving a string it can hand on unchanged.
@@ -127,7 +137,7 @@ class LLMService:
             "text_format": ProcessModel,
         }
         if model_registry.supports_temperature("openai", model):
-            request_params["temperature"] = 0
+            request_params["temperature"] = temperature
 
         try:
             logger.info("Calling OpenAI responses.parse (model=%s)", model)
@@ -143,6 +153,7 @@ class LLMService:
         user_text,
         prompting_strategy,
         model="gemini-3.5-flash",
+        temperature=0.0,
     ):
         """Call a Google Gemini model via the unified ``google-genai`` SDK.
 
@@ -157,6 +168,13 @@ class LLMService:
         OpenAI path uses — so Gemini is constrained to the BPMN-JSON shape and
         ``type`` values instead of relying on the prompt's hand-written rules.
         ``response.text`` is still the raw JSON string the caller hands on.
+
+        ``temperature`` defaults to ``0.0``; the retry loop passes a small
+        non-zero value on regeneration. At ``0.0`` we also pin ``top_k=1`` /
+        ``top_p=1.0`` for fully greedy, deterministic decoding. When a non-zero
+        temperature is requested those are left at the model defaults — pinning
+        ``top_k=1`` would force greedy selection regardless of temperature, so
+        keeping them would make the retry's temperature bump a no-op.
 
         ``model`` defaults to ``gemini-3.5-flash`` (the current standard flash
         tier); the v2 ``/generate`` flow passes the model selected from the
@@ -178,9 +196,12 @@ class LLMService:
             "response_schema": ProcessModel,
         }
         if model_registry.supports_temperature("gemini", model):
-            config["temperature"] = 0.0
-            config["top_k"] = 1
-            config["top_p"] = 1.0
+            config["temperature"] = temperature
+            if temperature == 0.0:
+                # Greedy decoding for a deterministic first attempt. Omitted on
+                # retries so the temperature bump can actually vary the output.
+                config["top_k"] = 1
+                config["top_p"] = 1.0
 
         request_params = {
             "model": model,
@@ -196,13 +217,17 @@ class LLMService:
             raise self._fail("gemini", e) from e
 
     def generate(self, api_key, provider, model, user_text, system_prompt,
-                 prompting_strategy="few_shot"):
+                 prompting_strategy="few_shot", temperature=0.0):
         """Provider-agnostic entry point used by the v2 ``/generate`` route.
 
         Looks up the dispatch method for ``provider`` in the registry and calls
         it with the registry-selected ``model``. Raises ``ValueError`` if the
         provider has no dispatch mapping (the route validates the pair against
         the registry first, so this is a defensive guard).
+
+        ``temperature`` is forwarded to the provider call; the retry loop raises
+        it above ``0.0`` on regeneration so a rejected attempt is not produced
+        verbatim again.
         """
         method_name = model_registry.dispatch_method(provider)
         if method_name is None:
@@ -214,4 +239,5 @@ class LLMService:
             user_text=user_text,
             prompting_strategy=prompting_strategy,
             model=model,
+            temperature=temperature,
         )

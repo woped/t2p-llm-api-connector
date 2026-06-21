@@ -89,6 +89,26 @@ class TestV2Api(unittest.TestCase):
         # The error must not leak which check failed.
         self.assertNotIn("problem", response.get_json()["error"]["message"])
 
+    @patch("app.validation.VALIDATORS", [lambda model: ["problem"]])
+    @patch("app.api.routes._llm_service")
+    def test_generate_escalates_temperature_on_retry(self, mock_service):
+        # The first attempt must be deterministic (temperature 0); regenerations
+        # must use a non-zero temperature, otherwise the identical prompt would
+        # reproduce the identical invalid output and the retries are wasted.
+        from app.api.routes import _RETRY_TEMPERATURE
+
+        mock_service.generate.return_value = '{"events": [], "tasks": []}'
+        self.client.post(
+            "/generate",
+            headers={"Authorization": "Bearer secret-token"},
+            json={"user_text": "x", "provider": "openai", "model": "gpt-4o"},
+        )
+        temperatures = [
+            call.kwargs["temperature"]
+            for call in mock_service.generate.call_args_list
+        ]
+        self.assertEqual(temperatures, [0.0, _RETRY_TEMPERATURE, _RETRY_TEMPERATURE])
+
     @patch("app.validation.VALIDATORS", [])
     @patch("app.api.routes._llm_service")
     def test_generate_does_not_retry_when_valid(self, mock_service):

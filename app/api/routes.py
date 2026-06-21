@@ -28,6 +28,13 @@ _llm_service = LLMService()
 # the first try, so this is one initial call plus two retries.
 _MAX_GENERATION_ATTEMPTS = 3
 
+# Temperature used when regenerating after a validation failure. The first
+# attempt runs deterministically (temperature 0); without a bump the identical
+# prompt would yield the identical invalid output, wasting the retries. Kept
+# small so the output still tracks the prompt closely. (Reasoning models that
+# reject temperature are unaffected — the provider call drops it for them.)
+_RETRY_TEMPERATURE = 0.3
+
 
 def _generate_validated(**generate_kwargs):
     """Generate a process model, regenerating until it passes validation.
@@ -42,6 +49,9 @@ def _generate_validated(**generate_kwargs):
     enforced structured output).
     """
     for attempt in range(1, _MAX_GENERATION_ATTEMPTS + 1):
+        # Deterministic first attempt; regenerations use a small non-zero
+        # temperature so a rejected output is not reproduced verbatim.
+        generate_kwargs["temperature"] = 0.0 if attempt == 1 else _RETRY_TEMPERATURE
         raw_response = _llm_service.generate(**generate_kwargs)
         try:
             model = json.loads(raw_response)
