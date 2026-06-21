@@ -143,6 +143,19 @@ def check_explicit_splits(model):
     ]
 
 
+def check_explicit_joins(model):
+    """A join (more than one incoming flow) must go through a gateway."""
+    gateway_ids = {g.get("id") for g in model.get("gateways", [])}
+    incoming = {}
+    for flow in model.get("flows", []):
+        incoming[flow.get("target")] = incoming.get(flow.get("target"), 0) + 1
+    return [
+        f"Node '{node.get('id')}' has multiple incoming flows; a join must use a gateway."
+        for node in _nodes(model)
+        if node.get("id") not in gateway_ids and incoming.get(node.get("id"), 0) > 1
+    ]
+
+
 def check_gateway_types(model):
     """Only exclusive (XOR) and parallel (AND) gateways are supported."""
     return [
@@ -161,6 +174,7 @@ VALIDATORS = [
     check_no_self_loops,
     check_connectivity,
     check_explicit_splits,
+    check_explicit_joins,
     check_gateway_types,
 ]
 

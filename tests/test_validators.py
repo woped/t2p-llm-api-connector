@@ -8,6 +8,7 @@ reports it.
 from app.validation import (
     check_connectivity,
     check_event_flow_direction,
+    check_explicit_joins,
     check_explicit_splits,
     check_flow_references,
     check_gateway_types,
@@ -19,7 +20,8 @@ from app.validation import (
 
 
 def _valid_model():
-    """A small, fully-valid workflow: start -> t1 -> g1 -(t2)-> end / g1 -> end."""
+    """A fully-valid workflow with an explicit XOR split and join:
+    start -> t1 -> g1 -<t2, t3>-> g2 -> end."""
     return {
         "events": [
             {"id": "start", "type": "startEvent", "name": "Start"},
@@ -28,16 +30,20 @@ def _valid_model():
         "tasks": [
             {"id": "t1", "type": "userTask", "name": "Do A"},
             {"id": "t2", "type": "userTask", "name": "Do B"},
+            {"id": "t3", "type": "userTask", "name": "Do C"},
         ],
         "gateways": [
-            {"id": "g1", "type": "exclusiveGateway", "name": "Decision"},
+            {"id": "g1", "type": "exclusiveGateway", "name": "Split"},
+            {"id": "g2", "type": "exclusiveGateway", "name": "Join"},
         ],
         "flows": [
             {"id": "f1", "type": "sequenceFlow", "source": "start", "target": "t1"},
             {"id": "f2", "type": "sequenceFlow", "source": "t1", "target": "g1"},
             {"id": "f3", "type": "sequenceFlow", "source": "g1", "target": "t2"},
-            {"id": "f4", "type": "sequenceFlow", "source": "g1", "target": "end"},
-            {"id": "f5", "type": "sequenceFlow", "source": "t2", "target": "end"},
+            {"id": "f4", "type": "sequenceFlow", "source": "g1", "target": "t3"},
+            {"id": "f5", "type": "sequenceFlow", "source": "t2", "target": "g2"},
+            {"id": "f6", "type": "sequenceFlow", "source": "t3", "target": "g2"},
+            {"id": "f7", "type": "sequenceFlow", "source": "g2", "target": "end"},
         ],
     }
 
@@ -50,6 +56,7 @@ _ALL_CHECKS = (
     check_no_self_loops,
     check_connectivity,
     check_explicit_splits,
+    check_explicit_joins,
     check_gateway_types,
 )
 
@@ -139,6 +146,15 @@ def test_explicit_splits_detects_task_fork():
         {"id": "fx", "type": "sequenceFlow", "source": "t1", "target": "end"}
     )
     assert check_explicit_splits(model)
+
+
+def test_explicit_joins_detects_task_join():
+    model = _valid_model()
+    # A second arrow into "end" makes it an implicit join with no gateway.
+    model["flows"].append(
+        {"id": "fx", "type": "sequenceFlow", "source": "t2", "target": "end"}
+    )
+    assert check_explicit_joins(model)
 
 
 def test_gateway_types_rejects_inclusive_or():
