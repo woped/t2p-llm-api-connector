@@ -5,7 +5,8 @@ import pytest
 from app.validation import ValidationError, validate_model
 
 
-def test_empty_registry_passes_through():
+def test_empty_registry_passes_through(monkeypatch):
+    monkeypatch.setattr("app.validation.VALIDATORS", [])
     model = {"events": [], "tasks": [], "gateways": [], "flows": []}
     assert validate_model(model) is model
 
