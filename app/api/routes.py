@@ -1,7 +1,8 @@
-import logging, time
+import json, logging, time
 from app.api import bp
 from app.services.llm_service import LLMService
 from app.services import model_registry
+from app.validation import validate_model, ValidationError
 from flask import request, jsonify, current_app
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
@@ -22,6 +23,40 @@ REQUEST_LATENCY = Histogram(
 # (the per-call provider clients are still created inside each call_* method,
 # keeping per-request API keys isolated).
 _llm_service = LLMService()
+
+# A failed validation re-runs the whole LLM generation. Total attempts include
+# the first try, so this is one initial call plus two retries.
+_MAX_GENERATION_ATTEMPTS = 3
+
+
+def _generate_validated(**generate_kwargs):
+    """Generate a process model, regenerating until it passes validation.
+
+    Calls the LLM up to ``_MAX_GENERATION_ATTEMPTS`` times; the first response
+    that passes validation is returned unchanged. A response that fails a
+    validator triggers a fresh generation. Returns ``None`` if every attempt
+    fails, so the caller can return a single generic error.
+
+    Validation runs on the parsed model; a response that is not JSON is returned
+    as-is (JSON-ness is the downstream contract's concern, and will be covered by
+    enforced structured output).
+    """
+    for attempt in range(1, _MAX_GENERATION_ATTEMPTS + 1):
+        raw_response = _llm_service.generate(**generate_kwargs)
+        try:
+            model = json.loads(raw_response)
+        except (json.JSONDecodeError, TypeError):
+            return raw_response
+        try:
+            validate_model(model)
+            return raw_response
+        except ValidationError:
+            logger.info(
+                "Generation attempt %d/%d failed validation; retrying",
+                attempt,
+                _MAX_GENERATION_ATTEMPTS,
+            )
+    return None
 
 
 # --- v2 contract API (consumed by t2p-2.0) --------------------------------
@@ -95,7 +130,7 @@ def generate():
         logger.info(
             "Invoking LLMService.generate (provider=%s, model=%s)", provider, model
         )
-        raw_response = _llm_service.generate(
+        raw_response = _generate_validated(
             api_key=api_key,
             provider=provider,
             model=model,
@@ -103,6 +138,13 @@ def generate():
             system_prompt=current_app.config["SYSTEM_PROMPT"],
             prompting_strategy=data.get("prompting_strategy", "few_shot"),
         )
+        if raw_response is None:
+            status = "502"
+            return _v2_error(
+                502,
+                "upstream_error",
+                "Could not generate a valid model. Please try again.",
+            )
         return jsonify({"raw_response": raw_response}), 200
 
     except Exception as e:

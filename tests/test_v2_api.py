@@ -73,6 +73,34 @@ class TestV2Api(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {"raw_response": "RAW GEMINI JSON"})
 
+    # --- /generate retry-on-validation -----------------------------------
+    @patch("app.validation.VALIDATORS", [lambda model: ["problem"]])
+    @patch("app.api.routes._llm_service")
+    def test_generate_retries_then_errors_when_validation_fails(self, mock_service):
+        mock_service.generate.return_value = '{"events": [], "tasks": []}'
+        response = self.client.post(
+            "/generate",
+            headers={"Authorization": "Bearer secret-token"},
+            json={"user_text": "x", "provider": "openai", "model": "gpt-4o"},
+        )
+        self.assertEqual(response.status_code, 502)
+        # Three attempts total: one initial call plus two retries.
+        self.assertEqual(mock_service.generate.call_count, 3)
+        # The error must not leak which check failed.
+        self.assertNotIn("problem", response.get_json()["error"]["message"])
+
+    @patch("app.validation.VALIDATORS", [])
+    @patch("app.api.routes._llm_service")
+    def test_generate_does_not_retry_when_valid(self, mock_service):
+        mock_service.generate.return_value = '{"events": [], "tasks": []}'
+        response = self.client.post(
+            "/generate",
+            headers={"Authorization": "Bearer secret-token"},
+            json={"user_text": "x", "provider": "openai", "model": "gpt-4o"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_service.generate.call_count, 1)
+
     # --- /generate validation --------------------------------------------
     def test_generate_missing_bearer_is_401(self):
         response = self.client.post(
