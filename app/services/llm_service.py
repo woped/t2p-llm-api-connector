@@ -10,8 +10,12 @@ from app.services import model_registry
 logger = logging.getLogger(__name__)
 
 # Upper bound on generated tokens, shared by both providers so the output budget
-# is consistent regardless of which model handles the request.
-_MAX_OUTPUT_TOKENS = 4096
+# is consistent regardless of which model handles the request. This is a ceiling,
+# not a target — callers are billed only for the tokens actually generated — so it
+# is set generously to give large process models room rather than truncating their
+# JSON. Truncation against this bound is detected and surfaced per provider below.
+# Kept within every registered model's output limit (e.g. gpt-4o caps at 16384).
+_MAX_OUTPUT_TOKENS = 8192
 
 
 class ProviderError(Exception):
@@ -142,9 +146,21 @@ class LLMService:
         try:
             logger.info("Calling OpenAI responses.parse (model=%s)", model)
             response = client.responses.parse(**request_params)
-            return self._finish("openai", response.output_text, start_time)
         except Exception as e:
             raise self._fail("openai", e) from e
+
+        # A truncated (max_output_tokens) or content-filtered response comes back
+        # with status "incomplete" and partial/empty output. Returning that
+        # partial text would hand broken JSON to the caller, so fail explicitly.
+        if getattr(response, "status", None) == "incomplete":
+            reason = getattr(
+                getattr(response, "incomplete_details", None), "reason", None
+            )
+            raise ProviderError(
+                f"OpenAI returned an incomplete response (reason={reason}); the "
+                f"model likely hit max_output_tokens={_MAX_OUTPUT_TOKENS}."
+            )
+        return self._finish("openai", response.output_text, start_time)
 
     def call_gemini(
         self,
@@ -185,10 +201,8 @@ class LLMService:
         )
         client = genai.Client(api_key=api_key)
 
-        # Gemini nests the generation settings in a `config` object (the only
-        # structural difference from OpenAI's flat params); everything else
-        # follows the same build-request_params-then-call(**request_params)
-        # pattern.
+        # Gemini nests the generation settings in a `config` object — the only
+        # structural difference from OpenAI's flat request params.
         config = {
             "system_instruction": system_prompt,
             "max_output_tokens": _MAX_OUTPUT_TOKENS,
@@ -212,9 +226,21 @@ class LLMService:
         try:
             logger.info("Calling Gemini generate_content (model=%s)", model)
             response = client.models.generate_content(**request_params)
-            return self._finish("gemini", response.text, start_time)
         except Exception as e:
             raise self._fail("gemini", e) from e
+
+        # Anything other than a clean STOP (e.g. MAX_TOKENS truncation or a
+        # SAFETY block) means the JSON is partial or absent; reading
+        # ``response.text`` would yield broken/empty output, so fail explicitly.
+        # Compared by name so a non-STOP reason surfaces regardless of SDK enum.
+        candidate = response.candidates[0] if response.candidates else None
+        finish = getattr(getattr(candidate, "finish_reason", None), "name", None)
+        if finish is not None and finish not in ("STOP", "FINISH_REASON_UNSPECIFIED"):
+            raise ProviderError(
+                f"Gemini did not finish cleanly (finish_reason={finish}); output "
+                f"may exceed max_output_tokens={_MAX_OUTPUT_TOKENS} or was blocked."
+            )
+        return self._finish("gemini", response.text, start_time)
 
     def generate(self, api_key, provider, model, user_text, system_prompt,
                  prompting_strategy="few_shot", temperature=0.0):

@@ -20,12 +20,16 @@ class TestV2Api(unittest.TestCase):
         # Responses API: client.responses.parse(...).output_text
         mock_response = MagicMock()
         mock_response.output_text = content
+        mock_response.status = "completed"  # not truncated/incomplete
         mock_openai.return_value.responses.parse.return_value = mock_response
 
     def _mock_gemini(self, mock_genai, content="RAW GEMINI JSON"):
         # google-genai SDK: genai.Client(...).models.generate_content(...).text
         mock_response = MagicMock()
         mock_response.text = content
+        candidate = MagicMock()
+        candidate.finish_reason.name = "STOP"  # finished cleanly
+        mock_response.candidates = [candidate]
         mock_genai.Client.return_value.models.generate_content.return_value = (
             mock_response
         )
@@ -202,6 +206,49 @@ class TestV2Api(unittest.TestCase):
         error = response.get_json()["error"]
         self.assertEqual(error["code"], "upstream_error")
         self.assertEqual(error["message"], "rate limited")
+
+    # --- /generate truncation / abnormal finish --------------------------
+    @patch("app.services.llm_service.OpenAI")
+    def test_generate_openai_incomplete_is_502(self, mock_openai):
+        # A response truncated at max_output_tokens comes back as "incomplete"
+        # with partial output; it must surface as an upstream error, not be
+        # passed through as if it were a valid model.
+        mock_response = MagicMock()
+        mock_response.status = "incomplete"
+        mock_response.incomplete_details.reason = "max_output_tokens"
+        mock_response.output_text = '{"events": [{"id": "startEv'  # partial JSON
+        mock_openai.return_value.responses.parse.return_value = mock_response
+        response = self.client.post(
+            "/generate",
+            headers={"Authorization": "Bearer secret-token"},
+            json={"user_text": "x", "provider": "openai", "model": "gpt-4o"},
+        )
+        self.assertEqual(response.status_code, 502)
+        error = response.get_json()["error"]
+        self.assertEqual(error["code"], "upstream_error")
+        self.assertIn("max_output_tokens", error["message"])
+
+    @patch("app.services.llm_service.genai")
+    def test_generate_gemini_max_tokens_is_502(self, mock_genai):
+        # Gemini truncation surfaces as finish_reason=MAX_TOKENS; reading .text
+        # would yield broken JSON, so it must fail as an upstream error.
+        mock_response = MagicMock()
+        mock_response.text = '{"events": [{"id": "startEv'  # partial JSON
+        candidate = MagicMock()
+        candidate.finish_reason.name = "MAX_TOKENS"
+        mock_response.candidates = [candidate]
+        mock_genai.Client.return_value.models.generate_content.return_value = (
+            mock_response
+        )
+        response = self.client.post(
+            "/generate",
+            headers={"Authorization": "Bearer secret-token"},
+            json={"user_text": "x", "provider": "gemini", "model": "gemini-3.5-flash"},
+        )
+        self.assertEqual(response.status_code, 502)
+        error = response.get_json()["error"]
+        self.assertEqual(error["code"], "upstream_error")
+        self.assertIn("MAX_TOKENS", error["message"])
 
     # --- /generate malformed body ----------------------------------------
     def test_generate_non_json_body_is_400(self):
