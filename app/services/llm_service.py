@@ -3,6 +3,7 @@ import time
 from openai import OpenAI
 from google import genai
 from app.utils.prompt_builder import PromptBuilder
+from app.schemas import ProcessModel
 from app.services import model_registry
 
 
@@ -91,14 +92,23 @@ class LLMService:
     def call_openai(
         self, api_key, system_prompt, user_text, prompting_strategy, model="gpt-4o"
     ):
-        """Call an OpenAI model via the Responses API.
+        """Call an OpenAI model via the Responses API with Structured Outputs.
 
-        Uses ``client.responses.create`` — the interface OpenAI now recommends
-        for new projects — rather than the legacy Chat Completions endpoint. The
-        Responses API unifies the output-token parameter as ``max_output_tokens``
-        for every model, so the only model-dependent knob left is ``temperature``:
-        GPT-5.x / o-series reasoning models reject it, while ``gpt-4o`` accepts
-        it. That capability comes from the registry instead of a name heuristic.
+        Uses ``client.responses.parse`` — the interface OpenAI now recommends
+        for new projects — rather than the legacy Chat Completions endpoint, and
+        passes ``text_format=ProcessModel`` so the model is constrained to the
+        BPMN-JSON schema (a strict JSON schema is compiled from the Pydantic
+        model). This guarantees valid JSON and the exact element/flow ``type``
+        values, replacing the prompt's hand-written "only return JSON" rules.
+
+        The Responses API unifies the output-token parameter as
+        ``max_output_tokens`` for every model, so the only model-dependent knob
+        left is ``temperature``: GPT-5.x / o-series reasoning models reject it,
+        while ``gpt-4o`` accepts it. That capability comes from the registry
+        instead of a name heuristic.
+
+        Returns ``response.output_text`` — the raw JSON string — so the calling
+        service keeps receiving a string it can hand on unchanged.
 
         ``model`` defaults to ``gpt-4o`` so existing (v1) callers and tests keep
         working; the v2 ``/generate`` flow passes the model selected from the
@@ -114,13 +124,14 @@ class LLMService:
             "instructions": system_prompt,
             "input": prompt,
             "max_output_tokens": _MAX_OUTPUT_TOKENS,
+            "text_format": ProcessModel,
         }
         if model_registry.supports_temperature("openai", model):
             request_params["temperature"] = 0
 
         try:
-            logger.info("Calling OpenAI responses.create (model=%s)", model)
-            response = client.responses.create(**request_params)
+            logger.info("Calling OpenAI responses.parse (model=%s)", model)
+            response = client.responses.parse(**request_params)
             return self._finish("openai", response.output_text, start_time)
         except Exception as e:
             raise self._fail("openai", e) from e
@@ -141,6 +152,12 @@ class LLMService:
         requests carrying different API keys it was a race condition. A
         per-request client isolates each call's credentials.
 
+        Enforces structured output via ``response_mime_type="application/json"``
+        plus ``response_schema=ProcessModel`` — the same Pydantic schema the
+        OpenAI path uses — so Gemini is constrained to the BPMN-JSON shape and
+        ``type`` values instead of relying on the prompt's hand-written rules.
+        ``response.text`` is still the raw JSON string the caller hands on.
+
         ``model`` defaults to ``gemini-3.5-flash`` (the current standard flash
         tier); the v2 ``/generate`` flow passes the model selected from the
         registry.
@@ -157,6 +174,8 @@ class LLMService:
         config = {
             "system_instruction": system_prompt,
             "max_output_tokens": _MAX_OUTPUT_TOKENS,
+            "response_mime_type": "application/json",
+            "response_schema": ProcessModel,
         }
         if model_registry.supports_temperature("gemini", model):
             config["temperature"] = 0.0

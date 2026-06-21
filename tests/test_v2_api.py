@@ -17,10 +17,10 @@ class TestV2Api(unittest.TestCase):
 
     # --- helpers ----------------------------------------------------------
     def _mock_openai(self, mock_openai, content="RAW BPMN JSON"):
-        # Responses API: client.responses.create(...).output_text
+        # Responses API: client.responses.parse(...).output_text
         mock_response = MagicMock()
         mock_response.output_text = content
-        mock_openai.return_value.responses.create.return_value = mock_response
+        mock_openai.return_value.responses.parse.return_value = mock_response
 
     def _mock_gemini(self, mock_genai, content="RAW GEMINI JSON"):
         # google-genai SDK: genai.Client(...).models.generate_content(...).text
@@ -133,7 +133,7 @@ class TestV2Api(unittest.TestCase):
     def test_generate_provider_error_is_502_upstream(self, mock_openai):
         # A provider error with no recognisable status maps to 502, and the
         # real upstream error text is passed through as the message.
-        mock_openai.return_value.responses.create.side_effect = RuntimeError("boom")
+        mock_openai.return_value.responses.parse.side_effect = RuntimeError("boom")
         response = self.client.post(
             "/generate",
             headers={"Authorization": "Bearer secret-token"},
@@ -172,7 +172,7 @@ class TestV2Api(unittest.TestCase):
         # instead of collapsing it to 502.
         exc = RuntimeError("rate limited")
         exc.status_code = 429
-        mock_openai.return_value.responses.create.side_effect = exc
+        mock_openai.return_value.responses.parse.side_effect = exc
         response = self.client.post(
             "/generate",
             headers={"Authorization": "Bearer secret-token"},
