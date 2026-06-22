@@ -4,8 +4,9 @@ from flask import Flask, request, g, send_from_directory
 from flask_wtf.csrf import CSRFProtect
 from flask_swagger_ui import get_swaggerui_blueprint
 
-# Logging konfigurieren
-logging.basicConfig(level=logging.INFO)
+# Logging is configured once, centrally, by setup_logging() in the entrypoint
+# (llm-api-connector.py). Modules only obtain a logger — calling basicConfig here
+# installed a second root handler and every line was emitted twice (plain + JSON).
 logger = logging.getLogger(__name__)
 
 

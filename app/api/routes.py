@@ -6,8 +6,8 @@ from app.validation import validate_model, ValidationError
 from flask import request, jsonify, current_app
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
-# Logging konfigurieren
-logging.basicConfig(level=logging.INFO)
+# Logging is configured centrally in the entrypoint (see app/__init__.py);
+# modules only obtain a logger here.
 logger = logging.getLogger(__name__)
 
 # Prometheus Metriken
