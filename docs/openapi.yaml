@@ -8,7 +8,7 @@ info:
 
     This spec is the machine-readable form of `docs/api-contract.md`; when the
     two disagree, the markdown contract is authoritative.
-  version: 1.0.0
+  version: 1.5.0
   contact:
     name: API Support
 servers:

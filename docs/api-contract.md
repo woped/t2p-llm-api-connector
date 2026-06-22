@@ -25,9 +25,10 @@ responses below (including 4xx) unchanged.
 ```
 Header: Authorization: Bearer <api_key>
 Body: {
-  "user_text": string  (required)
-  "provider":  string  (required)
-  "model":     string  (required)
+  "user_text":          string  (required)
+  "provider":           string  (required)
+  "model":              string  (required)
+  "prompting_strategy": string  (optional, "few_shot" | "zero_shot"; default "few_shot")
 }
 Response 200: { "raw_response": string }
 Response 400: { "error": { "code": string, "message": string } }
@@ -38,14 +39,19 @@ Response 500: { "error": { "code": string, "message": string } }
 ```
 
 The provider API key is supplied in the `Authorization` header. The connector builds the
-prompt, dispatches the call to the selected `provider`/`model`, and returns the raw
-provider response.
+prompt, dispatches the call to the selected `provider`/`model`, validates the generated
+model against its own validators, and returns the raw provider response. If validation
+fails, the connector retries (up to 3 attempts total, raising the temperature on retries);
+if every attempt fails validation it returns `502 upstream_error` with a generic message
+(`"Could not generate a valid model. Please try again."`).
 
 Error codes: `invalid_request`, `invalid_provider` (400); `unauthorized` (401);
-`upstream_error` (429 retryable / 502 bad gateway — the `message` carries the
-provider's own error text); `internal_error` (500). A missing or malformed
-`Authorization` header returns `401 unauthorized`; a non-JSON body or a
-missing/empty required field returns `400 invalid_request`.
+`upstream_error` (429 retryable / 502 bad gateway). For a 502 the `message` carries the
+provider's own error text when the provider failed, or the generic
+validation-exhaustion message above when all attempts produced invalid models.
+`internal_error` (500). A missing or malformed `Authorization` header returns
+`401 unauthorized`; a non-JSON body or a missing/empty required field returns
+`400 invalid_request`.
 
 ## `GET /models`
 
