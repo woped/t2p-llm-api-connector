@@ -2,7 +2,7 @@
 Version and metadata information for the LLM API Connector service.
 """
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 __service_name__ = "LLM API Connector"
 __description__ = "Service for interfacing with LLM providers (OpenAI, Google Gemini)"
 __author__ = "WoPeD Team"
