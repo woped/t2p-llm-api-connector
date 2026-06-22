@@ -88,8 +88,13 @@ The application will be accessible at http://localhost:5000.
 Run the following commands from the **project root** (not the `tests` folder — the test suite needs to resolve the `app` package):
 
 ```bash
-coverage run -m unittest discover -s tests
+coverage run -m pytest
 ```
+> The suite runs under **pytest** (not `unittest discover`): several modules are
+> plain pytest functions — the validators and the few-shot guard — which
+> `unittest discover` silently skips. `flask test` uses pytest for the same
+> reason.
+
 You can then view the coverage report by running:
 ```bash
 coverage report

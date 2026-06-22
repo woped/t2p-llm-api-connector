@@ -1,4 +1,4 @@
-import click, unittest, sys, logging, time, os
+import sys, logging, time, os
 from config import get_config
 from flask import Flask, request, g, send_from_directory
 from flask_wtf.csrf import CSRFProtect
@@ -84,20 +84,20 @@ def create_app(config_class=None):
     # CLI Commands
     @app.cli.command("test")
     def test():
-        """Run the unit tests."""
-        logger.info("Running unit tests...")
-        loader = unittest.TestLoader()
-        start_dir = "tests"
-        suite = loader.discover(start_dir)
+        """Run the full test suite with pytest.
 
-        runner = unittest.TextTestRunner(verbosity=2)
-        result = runner.run(suite)
+        Uses pytest rather than ``unittest`` discovery: several test modules are
+        written as plain pytest functions (the validators and the few-shot
+        guard), which ``unittest discover`` silently skips. Since CI runs this
+        command (``coverage run -m flask test``), discovery would leave the
+        whole validation layer untested there. pytest collects both styles.
+        """
+        import pytest
 
-        if result.wasSuccessful():
-            logger.info("All tests passed.")
-            return 0
-        else:
-            logger.error("Some tests failed.")
-            sys.exit(1)
+        logger.info("Running tests via pytest...")
+        exit_code = pytest.main(["tests", "-q"])
+        if exit_code != 0:
+            sys.exit(int(exit_code))
+        logger.info("All tests passed.")
 
     return app
