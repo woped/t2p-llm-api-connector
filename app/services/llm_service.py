@@ -242,8 +242,16 @@ class LLMService:
             )
         return self._finish("gemini", response.text, start_time)
 
-    def generate(self, api_key, provider, model, user_text, system_prompt,
-                 prompting_strategy="few_shot", temperature=0.0):
+    def generate(
+        self,
+        api_key,
+        provider,
+        model,
+        user_text,
+        system_prompt,
+        prompting_strategy="few_shot",
+        temperature=0.0,
+    ):
         """Provider-agnostic entry point used by the v2 ``/generate`` route.
 
         Looks up the dispatch method for ``provider`` in the registry and calls

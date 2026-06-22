@@ -1,4 +1,7 @@
-import sys, logging, time, os
+import logging
+import os
+import sys
+import time
 from config import get_config
 from flask import Flask, request, g, send_from_directory
 from flask_wtf.csrf import CSRFProtect
@@ -34,7 +37,7 @@ def create_app(config_class=None):
 
     # CSRF-Security
     if app.config.get("WTF_CSRF_ENABLED", True):
-        csrf = CSRFProtect(app)
+        CSRFProtect(app)  # registers itself on the app; no handle needed
         logger.info("CSRF protection enabled")
 
     # Register blueprints

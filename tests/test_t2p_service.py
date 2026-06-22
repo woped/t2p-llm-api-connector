@@ -41,9 +41,7 @@ class TestT2PService(unittest.TestCase):
                 mock_response = MagicMock()
                 mock_response.output_text = response_text
 
-                mock_openai.return_value.responses.parse.return_value = (
-                    mock_response
-                )
+                mock_openai.return_value.responses.parse.return_value = mock_response
 
                 # Run test
                 result = self.llm_service.call_openai(

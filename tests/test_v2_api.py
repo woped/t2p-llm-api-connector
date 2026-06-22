@@ -108,8 +108,7 @@ class TestV2Api(unittest.TestCase):
             json={"user_text": "x", "provider": "openai", "model": "gpt-4o"},
         )
         temperatures = [
-            call.kwargs["temperature"]
-            for call in mock_service.generate.call_args_list
+            call.kwargs["temperature"] for call in mock_service.generate.call_args_list
         ]
         self.assertEqual(temperatures, [0.0, _RETRY_TEMPERATURE, _RETRY_TEMPERATURE])
 
