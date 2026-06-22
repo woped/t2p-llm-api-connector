@@ -11,7 +11,6 @@ types) is the connector's structured-output concern and is not re-checked here.
 """
 
 _NODE_GROUPS = ("events", "tasks", "gateways")
-_ALLOWED_GATEWAY_TYPES = ("exclusiveGateway", "parallelGateway")
 
 
 class ValidationError(ValueError):
@@ -156,16 +155,6 @@ def check_explicit_joins(model):
     ]
 
 
-def check_gateway_types(model):
-    """Only exclusive (XOR) and parallel (AND) gateways are supported."""
-    return [
-        f"Gateway '{gateway.get('id')}' has unsupported type '{gateway.get('type')}'; "
-        "only exclusive or parallel gateways are allowed."
-        for gateway in model.get("gateways", [])
-        if gateway.get("type") not in _ALLOWED_GATEWAY_TYPES
-    ]
-
-
 VALIDATORS = [
     check_flow_references,
     check_unique_ids,
@@ -175,7 +164,6 @@ VALIDATORS = [
     check_connectivity,
     check_explicit_splits,
     check_explicit_joins,
-    check_gateway_types,
 ]
 
 

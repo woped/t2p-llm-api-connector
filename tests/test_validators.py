@@ -11,7 +11,6 @@ from app.validation import (
     check_explicit_joins,
     check_explicit_splits,
     check_flow_references,
-    check_gateway_types,
     check_no_self_loops,
     check_single_start_and_end,
     check_unique_ids,
@@ -57,7 +56,6 @@ _ALL_CHECKS = (
     check_connectivity,
     check_explicit_splits,
     check_explicit_joins,
-    check_gateway_types,
 )
 
 
@@ -155,9 +153,3 @@ def test_explicit_joins_detects_task_join():
         {"id": "fx", "type": "sequenceFlow", "source": "t2", "target": "end"}
     )
     assert check_explicit_joins(model)
-
-
-def test_gateway_types_rejects_inclusive_or():
-    model = _valid_model()
-    model["gateways"][0]["type"] = "inclusiveGateway"
-    assert check_gateway_types(model)
