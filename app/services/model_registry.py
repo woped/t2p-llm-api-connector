@@ -10,7 +10,7 @@ Keeping the registry here (instead of inline in the routes) means the advertised
 list and the accepted list can never drift apart.
 """
 
-# Each entry: provider key -> list of supported model names.
+# Each entry: provider key -> {model name -> capability metadata}.
 #
 # We list the current GPT-5.x / Gemini-3.x generations, but deliberately stay on
 # the cost-effective *standard* tiers (mini / nano / flash) rather than the
@@ -18,20 +18,24 @@ list and the accepted list can never drift apart.
 # process-description workload needs. ``gpt-4o`` is the only legacy model kept,
 # purely for backward compatibility.
 #
-# NOTE: the GPT-5.x models reject ``temperature`` and ``max_tokens`` and require
-# ``max_completion_tokens`` instead; ``LLMService.call_openai`` handles that
-# parameter split, so every model below works with the live dispatch.
+# Capability metadata drives the request parameters in ``LLMService`` so we no
+# longer rely on brittle model-name prefix heuristics:
+#
+# * ``supports_temperature`` — the GPT-5.x / o-series reasoning models reject
+#   ``temperature`` (and sampling knobs); ``gpt-4o`` and the Gemini models still
+#   accept them. With the OpenAI Responses API the token-limit parameter is
+#   unified (``max_output_tokens``), so temperature is the only remaining split.
 _REGISTRY = {
-    "openai": [
-        "gpt-5.5",  # newest general-purpose standard model
-        "gpt-5.4-mini",  # cost-effective, recommended default for this workload
-        "gpt-5.4-nano",  # cheapest, high-volume / low-latency
-        "gpt-4o",  # legacy, kept for backward compatibility
-    ],
-    "gemini": [
-        "gemini-3.5-flash",  # newest flash tier, best price/performance
-        "gemini-3.1-flash-lite",  # cheapest, high-volume / low-latency
-    ],
+    "openai": {
+        "gpt-5.5": {"supports_temperature": False},  # newest general-purpose standard
+        "gpt-5.4-mini": {"supports_temperature": False},  # recommended default here
+        "gpt-5.4-nano": {"supports_temperature": False},  # cheapest, high-volume
+        "gpt-4o": {"supports_temperature": True},  # legacy, backward compatibility
+    },
+    "gemini": {
+        "gemini-3.5-flash": {"supports_temperature": True},  # best price/performance
+        "gemini-3.1-flash-lite": {"supports_temperature": True},  # cheapest
+    },
 }
 
 # Maps a provider to the LLMService method name that dispatches the call.
@@ -56,7 +60,17 @@ def list_models():
 
 def is_valid(provider, model):
     """Return True if the given provider/model pair is supported."""
-    return model in _REGISTRY.get(provider, ())
+    return model in _REGISTRY.get(provider, {})
+
+
+def supports_temperature(provider, model):
+    """Return True if the model accepts a ``temperature`` (sampling) parameter.
+
+    Reasoning models (GPT-5.x / o-series) reject it. Defaults to ``True`` for
+    unknown pairs so the classic, widely-supported behaviour is the fallback;
+    callers validate the pair against the registry first anyway.
+    """
+    return _REGISTRY.get(provider, {}).get(model, {}).get("supports_temperature", True)
 
 
 def dispatch_method(provider):

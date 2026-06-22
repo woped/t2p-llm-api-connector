@@ -1,13 +1,15 @@
-import json, logging, time
+import json
+import logging
+import time
 from app.api import bp
-from app.services.llm_service import LLMService
+from app.services.llm_service import LLMService, ProviderError
 from app.services import model_registry
 from app.validation import validate_model, ValidationError
 from flask import request, jsonify, current_app
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
-# Logging konfigurieren
-logging.basicConfig(level=logging.INFO)
+# Logging is configured centrally in the entrypoint (see app/__init__.py);
+# modules only obtain a logger here.
 logger = logging.getLogger(__name__)
 
 # Prometheus Metriken
@@ -28,6 +30,13 @@ _llm_service = LLMService()
 # the first try, so this is one initial call plus two retries.
 _MAX_GENERATION_ATTEMPTS = 3
 
+# Temperature used when regenerating after a validation failure. The first
+# attempt runs deterministically (temperature 0); without a bump the identical
+# prompt would yield the identical invalid output, wasting the retries. Kept
+# small so the output still tracks the prompt closely. (Reasoning models that
+# reject temperature are unaffected — the provider call drops it for them.)
+_RETRY_TEMPERATURE = 0.3
+
 
 def _generate_validated(**generate_kwargs):
     """Generate a process model, regenerating until it passes validation.
@@ -42,6 +51,9 @@ def _generate_validated(**generate_kwargs):
     enforced structured output).
     """
     for attempt in range(1, _MAX_GENERATION_ATTEMPTS + 1):
+        # Deterministic first attempt; regenerations use a small non-zero
+        # temperature so a rejected output is not reproduced verbatim.
+        generate_kwargs["temperature"] = 0.0 if attempt == 1 else _RETRY_TEMPERATURE
         raw_response = _llm_service.generate(**generate_kwargs)
         try:
             model = json.loads(raw_response)
@@ -147,10 +159,19 @@ def generate():
             )
         return jsonify({"raw_response": raw_response}), 200
 
+    except ProviderError as e:
+        # The upstream provider (OpenAI / Google) rejected or failed the call.
+        # Forward its real error text and mirror the upstream status so the
+        # calling service can debug and react (429 is retryable; otherwise it is
+        # a bad-gateway condition). The traceback is already logged in the
+        # service layer.
+        http_status = 429 if e.upstream_status == 429 else 502
+        status = str(http_status)
+        return _v2_error(http_status, "upstream_error", str(e))
     except Exception as e:
         status = "500"
         logger.exception("/generate failed: %s", e)
-        return _v2_error(500, "upstream_error", "The LLM provider call failed.")
+        return _v2_error(500, "internal_error", "An unexpected error occurred.")
     finally:
         REQUEST_COUNT.labels(method="POST", endpoint="/generate", status=status).inc()
         REQUEST_LATENCY.labels(method="POST", endpoint="/generate").observe(

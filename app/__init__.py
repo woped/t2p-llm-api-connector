@@ -1,11 +1,15 @@
-import click, unittest, sys, logging, time, os
+import logging
+import os
+import sys
+import time
 from config import get_config
 from flask import Flask, request, g, send_from_directory
 from flask_wtf.csrf import CSRFProtect
 from flask_swagger_ui import get_swaggerui_blueprint
 
-# Logging konfigurieren
-logging.basicConfig(level=logging.INFO)
+# Logging is configured once, centrally, by setup_logging() in the entrypoint
+# (llm-api-connector.py). Modules only obtain a logger — calling basicConfig here
+# installed a second root handler and every line was emitted twice (plain + JSON).
 logger = logging.getLogger(__name__)
 
 
@@ -33,7 +37,7 @@ def create_app(config_class=None):
 
     # CSRF-Security
     if app.config.get("WTF_CSRF_ENABLED", True):
-        csrf = CSRFProtect(app)
+        CSRFProtect(app)  # registers itself on the app; no handle needed
         logger.info("CSRF protection enabled")
 
     # Register blueprints
@@ -84,20 +88,20 @@ def create_app(config_class=None):
     # CLI Commands
     @app.cli.command("test")
     def test():
-        """Run the unit tests."""
-        logger.info("Running unit tests...")
-        loader = unittest.TestLoader()
-        start_dir = "tests"
-        suite = loader.discover(start_dir)
+        """Run the full test suite with pytest.
 
-        runner = unittest.TextTestRunner(verbosity=2)
-        result = runner.run(suite)
+        Uses pytest rather than ``unittest`` discovery: several test modules are
+        written as plain pytest functions (the validators and the few-shot
+        guard), which ``unittest discover`` silently skips. Since CI runs this
+        command (``coverage run -m flask test``), discovery would leave the
+        whole validation layer untested there. pytest collects both styles.
+        """
+        import pytest
 
-        if result.wasSuccessful():
-            logger.info("All tests passed.")
-            return 0
-        else:
-            logger.error("Some tests failed.")
-            sys.exit(1)
+        logger.info("Running tests via pytest...")
+        exit_code = pytest.main(["tests", "-q"])
+        if exit_code != 0:
+            sys.exit(int(exit_code))
+        logger.info("All tests passed.")
 
     return app
