@@ -93,7 +93,7 @@ EXAMPLE OUTPUT FORMAT AND MANDATORY JSON STRUCTURE:
   ]
 }
 
-This shouuld also be the output from the LLM call. Beginning with { and ending with }.
+This should also be the output from the LLM call. Beginning with { and ending with }.
 
 IMPORTANT REMINDERS:
 - Return ONLY the JSON object without any markdown formatting
