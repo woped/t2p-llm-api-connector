@@ -53,6 +53,11 @@ Flows:
 - Each element must have exactly two sequence flows (in and out), except start and end events, which have only one.
 - All flows must use "sequenceFlow" type and have unique IDs.
 
+NAMING (KEEP LABELS SHORT):
+- Every "name" must be a concise label, NOT a sentence: a short verb-object phrase (e.g. "Ship order", "Check stock", "Approve request").
+- Aim for at most 3 words / ~25 characters per name. Do not restate the step description in the name.
+- The names are rendered as diagram labels below each node; long names overflow and overlap, making the diagram unreadable.
+
 VALIDATION CHECKLIST:
 ✅ Exactly one startEvent with type "startEvent"
 ✅ Exactly one endEvent with type "endEvent"  
