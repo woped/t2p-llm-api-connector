@@ -1,8 +1,9 @@
 import unittest, sys, logging, time
 from config import get_config
-from flask import Flask, request, g, redirect
+from flask import Flask, request, g
 from flask_wtf.csrf import CSRFProtect
 from flasgger import Swagger
+import yaml
 
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
@@ -78,8 +79,10 @@ def create_app(config_class=None):
 
     @app.route("/openapi.yaml")
     def openapi_yaml_alias():
-        # Compatibility alias for clients that still expect the old path.
-        return redirect("/openapi.json", code=302)
+        openapi_json_response = app.view_functions["flasgger.openapi"]()
+        openapi_spec = openapi_json_response.get_json()
+        openapi_yaml = yaml.safe_dump(openapi_spec, sort_keys=False, allow_unicode=True)
+        return app.response_class(openapi_yaml, mimetype="application/yaml")
 
     # Request logging
     @app.before_request

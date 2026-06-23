@@ -34,6 +34,14 @@ class Test_App(unittest.TestCase):
         self.assertIn("openapi", data)
         self.assertIn("paths", data)
 
+    def test_openapi_yaml_endpoint(self):
+        response = self.client.get("/openapi.yaml")
+        data = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("application/yaml", response.content_type)
+        self.assertIn("openapi: 3.0.2", data)
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
