@@ -3,6 +3,7 @@ from unittest.mock import patch, MagicMock
 
 from app import create_app
 from config import TestingConfig
+from app.api import routes as api_routes
 
 
 class TestV2Api(unittest.TestCase):
@@ -145,6 +146,35 @@ class TestV2Api(unittest.TestCase):
                 "Content-Type": "text/plain",
             },
             data="this is not json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"]["code"], "invalid_request")
+
+    @patch.object(api_routes._llm_service, "generate", return_value="RAW BPMN JSON")
+    def test_generate_defaults_to_zero_shot_strategy(self, mock_generate):
+        response = self.client.post(
+            "/generate",
+            headers={"Authorization": "Bearer secret-token"},
+            json={
+                "user_text": "describe a process",
+                "provider": "openai",
+                "model": "gpt-4o",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"raw_response": "RAW BPMN JSON"})
+        self.assertEqual(mock_generate.call_args.kwargs["prompting_strategy"], "zero_shot")
+
+    def test_generate_invalid_prompting_strategy_is_400(self):
+        response = self.client.post(
+            "/generate",
+            headers={"Authorization": "Bearer secret-token"},
+            json={
+                "user_text": "describe a process",
+                "provider": "openai",
+                "model": "gpt-4o",
+                "prompting_strategy": "invalid",
+            },
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json()["error"]["code"], "invalid_request")

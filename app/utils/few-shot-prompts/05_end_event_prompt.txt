@@ -1,0 +1,26 @@
+Task: Detect the single end event from the process text.
+
+Input:
+{{PROCESS_TEXT}}
+
+Output schema:
+{
+  "events": [
+    {"id": "endEvent1", "type": "endEvent", "name": "..."}
+  ]
+}
+
+Rules:
+- Return exactly one endEvent.
+- If multiple textual outcomes exist, normalize to one common completion event name.
+- Return no start events, tasks, gateways, or flows in this call.
+
+Few-shot example:
+Input:
+"If approved, the customer is notified and archived; if rejected, the customer is notified and the rejection is documented. The process then ends."
+Output:
+{
+  "events": [
+    {"id": "endEvent1", "type": "endEvent", "name": "process completed"}
+  ]
+}

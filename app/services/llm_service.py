@@ -112,7 +112,7 @@ class LLMService:
             raise
 
     def generate(self, api_key, provider, model, user_text, system_prompt,
-                 prompting_strategy="few_shot"):
+                 prompting_strategy="zero_shot"):
         """Provider-agnostic entry point used by the v2 ``/generate`` route.
 
         Looks up the dispatch method for ``provider`` in the registry and calls

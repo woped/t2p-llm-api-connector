@@ -1,0 +1,29 @@
+Task: Detect tasks from the process text.
+
+Input:
+{{PROCESS_TEXT}}
+
+Output schema:
+{
+  "tasks": [
+    {"id": "task1", "type": "userTask|serviceTask", "name": "..."}
+  ]
+}
+
+Rules:
+- Extract only action steps.
+- Choose userTask for human actions and serviceTask for automated/system actions.
+- Keep names short verb-object phrases in base form, lowercase preferred.
+- Keep order consistent with narrative order.
+
+Few-shot example:
+Input:
+"A customer submits an order. The system checks stock. The clerk approves the order."
+Output:
+{
+  "tasks": [
+    {"id": "task1", "type": "userTask", "name": "submit order"},
+    {"id": "task2", "type": "serviceTask", "name": "check stock"},
+    {"id": "task3", "type": "userTask", "name": "approve order"}
+  ]
+}
