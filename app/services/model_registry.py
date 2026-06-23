@@ -26,7 +26,7 @@ _DISPATCH = {
 def list_models():
     """Return the advertised models as a flat list of dicts.
 
-    Shape (matches the connector contract / openapi.yaml):
+    Shape (matches the connector contract):
     ``[{"provider": str, "model": str}, ...]``
     """
     return [

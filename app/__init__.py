@@ -1,4 +1,4 @@
-import click, unittest, sys, logging, time
+import unittest, sys, logging, time
 from config import get_config
 from flask import Flask, request, g, redirect
 from flask_wtf.csrf import CSRFProtect
