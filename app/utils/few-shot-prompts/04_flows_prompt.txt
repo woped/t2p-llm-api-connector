@@ -1,0 +1,53 @@
+Task: Detect sequence flows between known elements.
+
+Input:
+{{PROCESS_TEXT}}
+
+Known elements (from previous calls):
+{{KNOWN_ELEMENTS_JSON}}
+
+Output schema:
+{
+  "flows": [
+    {"id": "flow1", "type": "sequenceFlow", "source": "...", "target": "..."}
+  ]
+}
+
+Rules:
+- Use only element IDs that exist in known elements.
+- Respect narrative order and gateway semantics.
+- Include loops only when explicitly described.
+- Ensure each flow id is unique.
+- Connect elements using this deterministic order policy:
+  1) startEvent first,
+  2) then tasks/gateways in their canonical extraction order,
+  3) endEvent last.
+- Build a main forward path before adding branch edges.
+- For exclusive branching, connect split -> each branch head -> merge or end.
+- For parallel branching, connect split -> all parallel branch heads and ensure a
+  join gateway before continuing to downstream elements.
+- Do not create backward edges unless the text explicitly indicates repetition,
+  retry, or loop-back behavior.
+- Before returning, verify every non-start element is reachable from startEvent1 and
+  every non-end terminal path reaches endEvent1.
+
+Few-shot example:
+Input text:
+"A customer submits an order. The system checks stock. If stock is available, the clerk confirms the order; otherwise the clerk rejects it."
+Known elements:
+{
+  "events": [{"id": "startEvent1", "type": "startEvent", "name": "order submitted"}, {"id": "endEvent1", "type": "endEvent", "name": "process completed"}],
+  "tasks": [{"id": "task1", "type": "serviceTask", "name": "check stock"}, {"id": "task2", "type": "userTask", "name": "confirm order"}, {"id": "task3", "type": "userTask", "name": "reject order"}],
+  "gateways": [{"id": "gateway1", "type": "exclusiveGateway", "name": "stock available?"}]
+}
+Output:
+{
+  "flows": [
+    {"id": "flow1", "type": "sequenceFlow", "source": "startEvent1", "target": "task1"},
+    {"id": "flow2", "type": "sequenceFlow", "source": "task1", "target": "gateway1"},
+    {"id": "flow3", "type": "sequenceFlow", "source": "gateway1", "target": "task2"},
+    {"id": "flow4", "type": "sequenceFlow", "source": "gateway1", "target": "task3"},
+    {"id": "flow5", "type": "sequenceFlow", "source": "task2", "target": "endEvent1"},
+    {"id": "flow6", "type": "sequenceFlow", "source": "task3", "target": "endEvent1"}
+  ]
+}

@@ -1,0 +1,5 @@
+Please generate a BPMN model for the following description:
+
+{{PROCESS_TEXT}}
+
+BPMN:

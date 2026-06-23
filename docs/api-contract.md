@@ -1,8 +1,8 @@
 # LLM API Connector — Internal API
 
 Internal HTTP API consumed by t2p-2.0. The machine-readable form of this
-contract is [`docs/openapi.yaml`](openapi.yaml); this document is authoritative
-where the two disagree.
+contract is the generated OpenAPI spec at `/openapi.json` (Flasgger). A
+compatibility alias `/openapi.yaml` redirects to that endpoint.
 
 This connector is **internal — called solely by t2p-2.0** — and is the
 **authoritative validator** for the generate contract. It owns all request
@@ -28,6 +28,7 @@ Body: {
   "user_text": string  (required)
   "provider":  string  (required)
   "model":     string  (required)
+  "prompting_strategy": string  (optional: "zero_shot" | "few_shot", default: "zero_shot")
 }
 Response 200: { "raw_response": string }
 Response 400: { "error": { "code": string, "message": string } }

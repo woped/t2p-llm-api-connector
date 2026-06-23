@@ -1,8 +1,8 @@
-import click, unittest, sys, logging, time, os
+import click, unittest, sys, logging, time
 from config import get_config
-from flask import Flask, request, g, send_from_directory
+from flask import Flask, request, g, redirect
 from flask_wtf.csrf import CSRFProtect
-from flask_swagger_ui import get_swaggerui_blueprint
+from flasgger import Swagger
 
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
@@ -42,21 +42,44 @@ def create_app(config_class=None):
     app.register_blueprint(api_bp)
     logger.info("Blueprints registered")
 
-    # Swagger UI  — served at /docs, spec sourced from /openapi.yaml
-    SWAGGER_URL = "/docs"
-    SPEC_URL = "/openapi.yaml"
-    swaggerui_bp = get_swaggerui_blueprint(
-        SWAGGER_URL,
-        SPEC_URL,
-        config={"app_name": "LLM API Connector"},
-    )
-    app.register_blueprint(swaggerui_bp, url_prefix=SWAGGER_URL)
-
-    _docs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "docs")
+    # Flasgger / OpenAPI setup.
+    swagger_template = {
+        "openapi": "3.0.2",
+        "info": {
+            "title": "LLM API Connector",
+            "version": "1.0.0",
+            "description": "Internal API used by t2p-2.0 to call LLM providers.",
+        },
+        "components": {
+            "securitySchemes": {
+                "bearerAuth": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "description": "Provider API key as Authorization: Bearer <api_key>.",
+                }
+            }
+        },
+    }
+    swagger_config = {
+        "headers": [],
+        "specs": [
+            {
+                "endpoint": "openapi",
+                "route": "/openapi.json",
+                "rule_filter": lambda rule: True,
+                "model_filter": lambda tag: True,
+            }
+        ],
+        "static_url_path": "/flasgger_static",
+        "swagger_ui": True,
+        "specs_route": "/docs/",
+    }
+    Swagger(app, template=swagger_template, config=swagger_config)
 
     @app.route("/openapi.yaml")
-    def serve_openapi_yaml():
-        return send_from_directory(_docs_dir, "openapi.yaml")
+    def openapi_yaml_alias():
+        # Compatibility alias for clients that still expect the old path.
+        return redirect("/openapi.json", code=302)
 
     # Request logging
     @app.before_request

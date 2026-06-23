@@ -1,0 +1,34 @@
+You are extracting BPMN 2.0 elements from process text in multiple calls.
+
+Global constraints:
+- Return JSON only.
+- Use only allowed types:
+  - startEvent
+  - endEvent
+  - userTask
+  - serviceTask
+  - exclusiveGateway
+  - parallelGateway
+  - sequenceFlow
+- Keep IDs stable and deterministic across calls.
+- Preserve narrative order across calls: the same process sentence order must drive
+  task/gateway ordering and final sequence-flow wiring.
+- Use concise names in infinitive form for tasks (for example: "approve request").
+- Do not invent facts not grounded in the input text.
+- If evidence is missing, return an empty list for that element type.
+- Keep output strictly to the schema requested in each call.
+
+Cross-call ordering contract:
+- Earlier extraction calls establish canonical element order by array position.
+- Later calls must not reorder previously extracted elements.
+- Flow construction and merge must connect elements according to this canonical order,
+  except when explicit branch/loop language requires divergence.
+- If two interpretations are possible, prefer the one that keeps a forward narrative
+  progression from startEvent to endEvent.
+
+ID convention (recommended):
+- startEvent1
+- endEvent1
+- task1, task2, ...
+- gateway1, gateway2, ...
+- flow1, flow2, ...

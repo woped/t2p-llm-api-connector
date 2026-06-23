@@ -15,21 +15,33 @@ class TestPromptBuilder(unittest.TestCase):
     def test_zero_shot_embeds_user_input(self):
         prompt = PromptBuilder().build_prompt("zero_shot", "ship the order")
         self.assertIn("ship the order", prompt)
+        self.assertIn("Please generate a BPMN model", prompt)
 
     def test_few_shot_embeds_user_input(self):
         prompt = PromptBuilder().build_prompt("few_shot", "ship the order")
         self.assertIn("ship the order", prompt)
+        self.assertIn("stepwise few-shot method", prompt.lower())
 
-    def test_template_load_failure_degrades_gracefully(self):
-        # If the few-shot template file is missing or unreadable, the builder
-        # must not crash on construction: it falls back to no examples and can
-        # still build a (user-input-only) few-shot prompt.
-        with patch("builtins.open", side_effect=OSError("missing file")):
+    def test_prompt_pack_load_failure_degrades_gracefully(self):
+        # If all prompt-pack files are unreadable, the builder must not crash
+        # and few_shot falls back to a zero-shot style prompt.
+        with patch("pathlib.Path.read_text", side_effect=OSError("missing file")):
             builder = PromptBuilder()
 
-        self.assertEqual(builder.few_shot_templates, [])
+        self.assertTrue(builder.few_shot_prompt_pack)
+        self.assertTrue(all(v == "" for v in builder.few_shot_prompt_pack.values()))
         prompt = builder.build_prompt("few_shot", "ship the order")
         self.assertIn("ship the order", prompt)
+        self.assertIn("Please generate a BPMN model", prompt)
+
+    def test_zero_shot_template_load_failure_degrades_gracefully(self):
+        with patch("pathlib.Path.read_text", side_effect=OSError("missing file")):
+            builder = PromptBuilder()
+
+        self.assertEqual(builder.zero_shot_prompt_template, "")
+        prompt = builder.build_prompt("zero_shot", "ship the order")
+        self.assertIn("ship the order", prompt)
+        self.assertIn("Please generate a BPMN model", prompt)
 
 
 if __name__ == "__main__":

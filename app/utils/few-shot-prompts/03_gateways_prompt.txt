@@ -1,0 +1,34 @@
+Task: Detect gateways (decision or parallel split/join points) from the process text.
+
+Input:
+{{PROCESS_TEXT}}
+
+Output schema:
+{
+  "gateways": [
+    {"id": "gateway1", "type": "exclusiveGateway|parallelGateway", "name": "..."}
+  ]
+}
+
+Rules:
+- Use exclusiveGateway for either/or branching or decision points.
+- Use parallelGateway for simultaneous branches or synchronization.
+- Create only gateways justified by explicit text cues (if, otherwise, in parallel, simultaneously, all checks complete).
+- If none are present, return an empty list.
+- Preserve narrative position: place split gateways where branching begins and join
+  gateways where branches converge.
+- For each split implied in text, include the matching join when the text signals
+  completion/merge (for example: "after both", "once all checks are done").
+- Keep gateway order stable by first textual appearance to support deterministic flow
+  connection in later steps.
+
+Few-shot example:
+Input:
+"After registration, the process checks credit and verifies documents in parallel. Then both results are merged."
+Output:
+{
+  "gateways": [
+    {"id": "gateway1", "type": "parallelGateway", "name": "start parallel checks"},
+    {"id": "gateway2", "type": "parallelGateway", "name": "join parallel checks"}
+  ]
+}

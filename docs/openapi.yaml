@@ -112,9 +112,9 @@ components:
           example: gpt-4o
         prompting_strategy:
           type: string
-          description: Prompting strategy to use. Defaults to "few_shot" if omitted.
+          description: Prompting strategy to use. Defaults to "zero_shot" if omitted.
           enum: [few_shot, zero_shot]
-          default: few_shot
+          default: zero_shot
 
     GenerateResult:
       type: object
