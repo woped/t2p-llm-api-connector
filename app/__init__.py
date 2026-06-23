@@ -75,12 +75,18 @@ def create_app(config_class=None):
         "swagger_ui": True,
         "specs_route": "/docs/",
     }
-    Swagger(app, template=swagger_template, config=swagger_config)
+    swagger = Swagger(app, template=swagger_template, config=swagger_config)
 
     @app.route("/openapi.yaml")
     def openapi_yaml_alias():
-        openapi_json_response = app.view_functions["flasgger.openapi"]()
-        openapi_spec = openapi_json_response.get_json()
+        def _to_plain_types(value):
+            if isinstance(value, dict):
+                return {k: _to_plain_types(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [_to_plain_types(item) for item in value]
+            return value
+
+        openapi_spec = _to_plain_types(swagger.get_apispecs(endpoint="openapi"))
         openapi_yaml = yaml.safe_dump(openapi_spec, sort_keys=False, allow_unicode=True)
         return app.response_class(openapi_yaml, mimetype="application/yaml")
 

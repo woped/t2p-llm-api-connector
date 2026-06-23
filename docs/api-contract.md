@@ -2,7 +2,7 @@
 
 Internal HTTP API consumed by t2p-2.0. The machine-readable form of this
 contract is the generated OpenAPI spec at `/openapi.json` (Flasgger). A
-compatibility alias `/openapi.yaml` redirects to that endpoint.
+compatibility alias `/openapi.yaml` serves the same specification in YAML format.
 
 This connector is **internal — called solely by t2p-2.0** — and is the
 **authoritative validator** for the generate contract. It owns all request
