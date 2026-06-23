@@ -55,12 +55,16 @@ def _generate_validated(**generate_kwargs):
     generic error.
     """
     feedback = None
+    previous_model = None
     for attempt in range(1, _MAX_GENERATION_ATTEMPTS + 1):
         # Deterministic first attempt; regenerations use a small non-zero
         # temperature so a rejected output is not reproduced verbatim, and carry
-        # the previous attempt's validation problems so the model corrects them.
+        # the previous attempt's validation problems plus the rejected model so
+        # the model applies the fixes to that exact model instead of diverging.
         generate_kwargs["temperature"] = 0.0 if attempt == 1 else _RETRY_TEMPERATURE
-        raw_response = _llm_service.generate(**generate_kwargs, feedback=feedback)
+        raw_response = _llm_service.generate(
+            **generate_kwargs, feedback=feedback, previous_model=previous_model
+        )
         try:
             model = json.loads(raw_response)
         except (json.JSONDecodeError, TypeError):
@@ -70,6 +74,7 @@ def _generate_validated(**generate_kwargs):
             return raw_response
         except ValidationError as e:
             feedback = str(e)
+            previous_model = raw_response
             logger.info(
                 "Generation attempt %d/%d failed validation; retrying. Issues: %s",
                 attempt,

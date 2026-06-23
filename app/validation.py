@@ -130,29 +130,53 @@ def check_connectivity(model):
 
 
 def check_explicit_splits(model):
-    """A split (more than one outgoing flow) must go through a gateway."""
+    """A split (more than one outgoing flow) must go through a gateway.
+
+    The message names the offending flows and the exact repair so a regeneration
+    can act on it directly instead of guessing where the gateway belongs.
+    """
     gateway_ids = {g.get("id") for g in model.get("gateways", [])}
     outgoing = {}
     for flow in model.get("flows", []):
-        outgoing[flow.get("source")] = outgoing.get(flow.get("source"), 0) + 1
-    return [
-        f"Node '{node.get('id')}' has multiple outgoing flows; a split must use a gateway."
-        for node in _nodes(model)
-        if node.get("id") not in gateway_ids and outgoing.get(node.get("id"), 0) > 1
-    ]
+        outgoing.setdefault(flow.get("source"), []).append(flow.get("id"))
+    issues = []
+    for node in _nodes(model):
+        node_id = node.get("id")
+        flows = [f for f in outgoing.get(node_id, []) if f]
+        if node_id not in gateway_ids and len(flows) > 1:
+            flow_list = ", ".join(flows)
+            issues.append(
+                f"Node '{node_id}' has multiple outgoing flows ({flow_list}); a split "
+                "must use a gateway. Insert one exclusiveGateway (XOR) or "
+                f"parallelGateway (AND) whose single incoming flow comes from "
+                f"'{node_id}' and re-route {flow_list} to start at that gateway."
+            )
+    return issues
 
 
 def check_explicit_joins(model):
-    """A join (more than one incoming flow) must go through a gateway."""
+    """A join (more than one incoming flow) must go through a gateway.
+
+    The message names the offending flows and the exact repair so a regeneration
+    can act on it directly instead of guessing where the gateway belongs.
+    """
     gateway_ids = {g.get("id") for g in model.get("gateways", [])}
     incoming = {}
     for flow in model.get("flows", []):
-        incoming[flow.get("target")] = incoming.get(flow.get("target"), 0) + 1
-    return [
-        f"Node '{node.get('id')}' has multiple incoming flows; a join must use a gateway."
-        for node in _nodes(model)
-        if node.get("id") not in gateway_ids and incoming.get(node.get("id"), 0) > 1
-    ]
+        incoming.setdefault(flow.get("target"), []).append(flow.get("id"))
+    issues = []
+    for node in _nodes(model):
+        node_id = node.get("id")
+        flows = [f for f in incoming.get(node_id, []) if f]
+        if node_id not in gateway_ids and len(flows) > 1:
+            flow_list = ", ".join(flows)
+            issues.append(
+                f"Node '{node_id}' has multiple incoming flows ({flow_list}); a join "
+                "must use a gateway. Insert one exclusiveGateway (XOR) or "
+                f"parallelGateway (AND), re-route {flow_list} to target that gateway, "
+                f"and add one new flow from that gateway to '{node_id}'."
+            )
+    return issues
 
 
 VALIDATORS = [

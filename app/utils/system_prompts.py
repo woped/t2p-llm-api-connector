@@ -18,7 +18,9 @@ CRITICAL ERROR PREVENTION - The following are the most common failures:
 
 🚨 STRUCTURE ERRORS:
 - Use exactly ONE startEvent and ONE endEvent per process
-- All process paths must converge to the same single endEvent
+- All process paths must converge into the same single endEvent THROUGH an
+  exclusiveGateway (XOR join). The endEvent itself must have exactly ONE incoming
+  flow - never route two or more flows directly into the endEvent.
 - Multiple endEvents cause flow reference errors and transformation failures
 
 🚨 CASE SENSITIVITY ERRORS:
@@ -47,6 +49,7 @@ Gateways (Splitting/Joining Points):
 - NEVER use inclusive/OR gateways, event-based gateways, or complex gateways - they cannot be processed. If a step can lead to one or more of several paths, model it explicitly with exclusiveGateway and/or parallelGateway.
 - Every split (a point where the flow diverges into multiple paths) MUST go through an explicit gateway. A task or event must NEVER have more than one outgoing flow - place a gateway there and make clear whether it is exclusive (XOR) or parallel (AND).
 - Every join (a point where multiple paths converge) MUST go through an explicit gateway. A task or event must NEVER have more than one incoming flow - place a gateway there and make clear whether it is exclusive (XOR) or parallel (AND).
+- REJOIN PATTERN: whenever a gateway splits the flow, every branch must merge back together at a matching join gateway of the SAME type before continuing. This includes the common "optional step" case - e.g. an exclusiveGateway "Documents needed?" with branches [request docs -> assess] and [assess directly]: both branches must meet at ONE exclusiveGateway whose single outgoing flow goes to "Assess", they must NOT both point at "Assess" directly. A parallelGateway split must likewise be closed by a parallelGateway join.
 
 Flows:
 - Sequence Flows: Detail all sequence flows, explaining how tasks and events are interconnected. 

@@ -49,28 +49,55 @@ class LLMService:
     def __init__(self):
         self.prompt_builder = PromptBuilder()
 
-    def _prepare(self, provider, prompting_strategy, user_text, model, feedback=None):
+    def _prepare(
+        self,
+        provider,
+        prompting_strategy,
+        user_text,
+        model,
+        feedback=None,
+        previous_model=None,
+    ):
         """Build the prompt and emit the shared pre-call logging.
 
         Returns ``(prompt, start_time)``. Factored out so both provider methods
         share identical input handling, logging and timing.
 
         ``feedback`` carries the validation problems from a rejected previous
-        attempt. It is appended to the description (right before the "BPMN:"
-        completion cue) so the regeneration corrects those specific problems
-        instead of reproducing the same invalid structure.
+        attempt and ``previous_model`` the rejected model itself. They are
+        appended to the description so the regeneration applies the specific
+        fixes to that exact model instead of generating a fresh structure that
+        diverges and reintroduces other errors.
         """
         if not user_text:
             logger.warning("%s: empty user_text provided", provider)
         start_time = time.time()
         if feedback:
-            user_text = (
-                f"{user_text}\n\n"
+            correction = (
                 "The previous attempt was rejected for these workflow-net "
                 f"problems:\n{feedback}\n"
-                "Produce a corrected model that fixes them; every split or join "
-                "of control flow must go through an explicit gateway."
             )
+            if previous_model:
+                correction += (
+                    "Here is the exact model you returned previously:\n"
+                    f"{previous_model}\n"
+                    "Return that SAME model with ONLY the fixes above applied: add "
+                    "the named gateways and re-route the listed flows. Change "
+                    "nothing else - keep every other node id, name and flow "
+                    "identical, do not rename tasks, and do not restructure "
+                    "branches that were not flagged.\n"
+                )
+            else:
+                correction += (
+                    "Apply each instruction exactly: add the named gateways and "
+                    "re-route the listed flows.\n"
+                )
+            correction += (
+                "Control flow must never split or join directly on a task or "
+                "event - only a gateway may have more than one incoming or "
+                "outgoing flow."
+            )
+            user_text = f"{user_text}\n\n{correction}"
         prompt = self.prompt_builder.build_prompt(prompting_strategy, user_text)
         logger.debug(
             "%s: strategy=%s, model=%s, user_text_len=%d, prompt_len=%d",
@@ -115,6 +142,7 @@ class LLMService:
         model="gpt-5.4-mini",
         temperature=0.0,
         feedback=None,
+        previous_model=None,
     ):
         """Call an OpenAI model via the Responses API with Structured Outputs.
 
@@ -143,7 +171,7 @@ class LLMService:
         passes the model selected from the registry.
         """
         prompt, start_time = self._prepare(
-            "openai", prompting_strategy, user_text, model, feedback
+            "openai", prompting_strategy, user_text, model, feedback, previous_model
         )
         client = OpenAI(api_key=api_key)
 
@@ -185,6 +213,7 @@ class LLMService:
         model="gemini-3.5-flash",
         temperature=0.0,
         feedback=None,
+        previous_model=None,
     ):
         """Call a Google Gemini model via the unified ``google-genai`` SDK.
 
@@ -212,7 +241,7 @@ class LLMService:
         registry.
         """
         prompt, start_time = self._prepare(
-            "gemini", prompting_strategy, user_text, model, feedback
+            "gemini", prompting_strategy, user_text, model, feedback, previous_model
         )
         client = genai.Client(api_key=api_key)
 
@@ -267,6 +296,7 @@ class LLMService:
         prompting_strategy="few_shot",
         temperature=0.0,
         feedback=None,
+        previous_model=None,
     ):
         """Provider-agnostic entry point used by the v2 ``/generate`` route.
 
@@ -292,4 +322,5 @@ class LLMService:
             model=model,
             temperature=temperature,
             feedback=feedback,
+            previous_model=previous_model,
         )
