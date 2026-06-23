@@ -90,8 +90,15 @@ class TestV2Api(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
         # Three attempts total: one initial call plus two retries.
         self.assertEqual(mock_service.generate.call_count, 3)
-        # The error must not leak which check failed.
-        self.assertNotIn("problem", response.get_json()["error"]["message"])
+        # The error surfaces the actual validation problem so the failure is
+        # diagnosable instead of generic.
+        self.assertIn("problem", response.get_json()["error"]["message"])
+        # The first attempt runs blind; each retry is fed the previous attempt's
+        # problems so the model can correct them.
+        feedbacks = [
+            call.kwargs.get("feedback") for call in mock_service.generate.call_args_list
+        ]
+        self.assertEqual(feedbacks, [None, "problem", "problem"])
 
     @patch("app.validation.VALIDATORS", [lambda model: ["problem"]])
     @patch("app.api.routes._llm_service")

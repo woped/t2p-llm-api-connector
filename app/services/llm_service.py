@@ -49,15 +49,28 @@ class LLMService:
     def __init__(self):
         self.prompt_builder = PromptBuilder()
 
-    def _prepare(self, provider, prompting_strategy, user_text, model):
+    def _prepare(self, provider, prompting_strategy, user_text, model, feedback=None):
         """Build the prompt and emit the shared pre-call logging.
 
         Returns ``(prompt, start_time)``. Factored out so both provider methods
         share identical input handling, logging and timing.
+
+        ``feedback`` carries the validation problems from a rejected previous
+        attempt. It is appended to the description (right before the "BPMN:"
+        completion cue) so the regeneration corrects those specific problems
+        instead of reproducing the same invalid structure.
         """
         if not user_text:
             logger.warning("%s: empty user_text provided", provider)
         start_time = time.time()
+        if feedback:
+            user_text = (
+                f"{user_text}\n\n"
+                "The previous attempt was rejected for these workflow-net "
+                f"problems:\n{feedback}\n"
+                "Produce a corrected model that fixes them; every split or join "
+                "of control flow must go through an explicit gateway."
+            )
         prompt = self.prompt_builder.build_prompt(prompting_strategy, user_text)
         logger.debug(
             "%s: strategy=%s, model=%s, user_text_len=%d, prompt_len=%d",
@@ -101,6 +114,7 @@ class LLMService:
         prompting_strategy,
         model="gpt-5.4-mini",
         temperature=0.0,
+        feedback=None,
     ):
         """Call an OpenAI model via the Responses API with Structured Outputs.
 
@@ -129,7 +143,7 @@ class LLMService:
         passes the model selected from the registry.
         """
         prompt, start_time = self._prepare(
-            "openai", prompting_strategy, user_text, model
+            "openai", prompting_strategy, user_text, model, feedback
         )
         client = OpenAI(api_key=api_key)
 
@@ -170,6 +184,7 @@ class LLMService:
         prompting_strategy,
         model="gemini-3.5-flash",
         temperature=0.0,
+        feedback=None,
     ):
         """Call a Google Gemini model via the unified ``google-genai`` SDK.
 
@@ -197,7 +212,7 @@ class LLMService:
         registry.
         """
         prompt, start_time = self._prepare(
-            "gemini", prompting_strategy, user_text, model
+            "gemini", prompting_strategy, user_text, model, feedback
         )
         client = genai.Client(api_key=api_key)
 
@@ -251,6 +266,7 @@ class LLMService:
         system_prompt,
         prompting_strategy="few_shot",
         temperature=0.0,
+        feedback=None,
     ):
         """Provider-agnostic entry point used by the v2 ``/generate`` route.
 
@@ -261,7 +277,8 @@ class LLMService:
 
         ``temperature`` is forwarded to the provider call; the retry loop raises
         it above ``0.0`` on regeneration so a rejected attempt is not produced
-        verbatim again.
+        verbatim again. ``feedback`` is likewise forwarded so the regeneration
+        sees the previous attempt's validation problems.
         """
         method_name = model_registry.dispatch_method(provider)
         if method_name is None:
@@ -274,4 +291,5 @@ class LLMService:
             prompting_strategy=prompting_strategy,
             model=model,
             temperature=temperature,
+            feedback=feedback,
         )

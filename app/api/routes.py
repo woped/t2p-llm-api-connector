@@ -49,12 +49,18 @@ def _generate_validated(**generate_kwargs):
     Validation runs on the parsed model; a response that is not JSON is returned
     as-is (JSON-ness is the downstream contract's concern, and will be covered by
     enforced structured output).
+
+    Raises ``ValidationError`` carrying the last attempt's problems if every
+    attempt fails, so the caller can surface a meaningful reason instead of a
+    generic error.
     """
+    feedback = None
     for attempt in range(1, _MAX_GENERATION_ATTEMPTS + 1):
         # Deterministic first attempt; regenerations use a small non-zero
-        # temperature so a rejected output is not reproduced verbatim.
+        # temperature so a rejected output is not reproduced verbatim, and carry
+        # the previous attempt's validation problems so the model corrects them.
         generate_kwargs["temperature"] = 0.0 if attempt == 1 else _RETRY_TEMPERATURE
-        raw_response = _llm_service.generate(**generate_kwargs)
+        raw_response = _llm_service.generate(**generate_kwargs, feedback=feedback)
         try:
             model = json.loads(raw_response)
         except (json.JSONDecodeError, TypeError):
@@ -62,13 +68,15 @@ def _generate_validated(**generate_kwargs):
         try:
             validate_model(model)
             return raw_response
-        except ValidationError:
+        except ValidationError as e:
+            feedback = str(e)
             logger.info(
-                "Generation attempt %d/%d failed validation; retrying",
+                "Generation attempt %d/%d failed validation; retrying. Issues: %s",
                 attempt,
                 _MAX_GENERATION_ATTEMPTS,
+                feedback,
             )
-    return None
+    raise ValidationError(feedback)
 
 
 # --- v2 contract API (consumed by t2p-2.0) --------------------------------
@@ -142,20 +150,22 @@ def generate():
         logger.info(
             "Invoking LLMService.generate (provider=%s, model=%s)", provider, model
         )
-        raw_response = _generate_validated(
-            api_key=api_key,
-            provider=provider,
-            model=model,
-            user_text=data["user_text"],
-            system_prompt=current_app.config["SYSTEM_PROMPT"],
-            prompting_strategy=data.get("prompting_strategy", "few_shot"),
-        )
-        if raw_response is None:
+        try:
+            raw_response = _generate_validated(
+                api_key=api_key,
+                provider=provider,
+                model=model,
+                user_text=data["user_text"],
+                system_prompt=current_app.config["SYSTEM_PROMPT"],
+                prompting_strategy=data.get("prompting_strategy", "few_shot"),
+            )
+        except ValidationError as e:
             status = "502"
             return _v2_error(
                 502,
                 "upstream_error",
-                "Could not generate a valid model. Please try again.",
+                f"Could not generate a valid model after {_MAX_GENERATION_ATTEMPTS} "
+                f"attempts. Last validation problems: {e}",
             )
         return jsonify({"raw_response": raw_response}), 200
 
