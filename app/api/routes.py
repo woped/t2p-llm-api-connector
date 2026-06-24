@@ -1,4 +1,5 @@
-import logging, time
+import logging
+import time
 from app.api import bp
 from app.services.llm_service import LLMService
 from app.services import model_registry
@@ -212,7 +213,9 @@ def models():
     try:
         provider = request.args.get("provider") or None
         model_registry.refresh_model_cache(provider=provider)
-        return jsonify({"models": model_registry.get_cached_models(provider=provider)}), 200
+        return jsonify(
+            {"models": model_registry.get_cached_models(provider=provider)}
+        ), 200
     except Exception as e:
         status = "500"
         logger.exception("/models failed: %s", e)

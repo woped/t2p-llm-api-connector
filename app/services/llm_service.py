@@ -6,9 +6,15 @@ import google.generativeai as genai
 from app.utils.prompt_builder import PromptBuilder
 from app.services import model_registry
 from app.services.model_validator import ModelValidator
+from app.validation import VALIDATORS as _STRUCTURAL_VALIDATORS
 
 
 logger = logging.getLogger(__name__)
+
+# Few-shot repair budget: validate the model and, while it still violates the
+# rules, re-prompt to fix it -- up to this many passes before the attempt is
+# rejected.
+_MAX_REPAIR_ATTEMPTS = 3
 
 
 class LLMService:
@@ -56,6 +62,19 @@ class LLMService:
                     merged[key].append(item)
         return merged
 
+    def _validation_issues(self, model, user_text):
+        """All validation problems from BOTH gates: Benjamin's ModelValidator
+        (semantic / back-edge / sanitization checks) and our structural
+        workflow-net validators. The union is what the repair loop must clear,
+        so our checks are part of the authoritative gate -- not bypassed."""
+        issues = list(self.model_validator.validate_model(model, user_text))
+        issues.extend(
+            problem
+            for validator in _STRUCTURAL_VALIDATORS
+            for problem in validator(model)
+        )
+        return issues
+
     def _build_repair_prompt(self, user_text, model_json, issues):
         """Create a repair prompt from validation findings."""
         issues_block = "\n".join(f"- {issue}" for issue in issues)
@@ -69,6 +88,59 @@ class LLMService:
             f"{issues_block}\n\n"
             "Current model:\n"
             f"{model_block}\n"
+        )
+
+    def _validate_and_repair_model(self, model, user_text, regenerate):
+        """Sanitize -> validate (both gates) -> reject + re-prompt, up to
+        ``_MAX_REPAIR_ATTEMPTS`` times. ``regenerate(prompt) -> model dict``
+        produces a fresh model from a repair prompt. Returns the validated model
+        as a JSON string, or raises ``ValueError`` if it cannot be made valid."""
+        sanitized = self.model_validator.sanitize_model(model)
+        issues = self._validation_issues(sanitized, user_text)
+
+        repair_attempt = 0
+        while issues and repair_attempt < _MAX_REPAIR_ATTEMPTS:
+            repair_attempt += 1
+            logger.warning(
+                "validation found %d issue(s); repair attempt %d/%d",
+                len(issues),
+                repair_attempt,
+                _MAX_REPAIR_ATTEMPTS,
+            )
+            repair_prompt = self._build_repair_prompt(user_text, sanitized, issues)
+            try:
+                repaired = regenerate(repair_prompt)
+            except ValueError as repair_error:
+                logger.warning(
+                    "repair step failed (%s); keeping last sanitized model",
+                    repair_error,
+                )
+                break
+            sanitized = self.model_validator.sanitize_model(repaired)
+            issues = self._validation_issues(sanitized, user_text)
+
+        if issues:
+            # Repair budget exhausted and still invalid: reject -- our system
+            # never emits a model that fails validation.
+            raise ValueError(
+                f"Model still invalid after {repair_attempt} repair attempt(s): "
+                + "; ".join(issues)
+            )
+        return json.dumps(sanitized, ensure_ascii=False)
+
+    def _validate_and_repair_text(self, raw_text, user_text, regenerate_text):
+        """Strategy-independent gate for a raw LLM response. Non-JSON output is
+        returned as-is (JSON-ness is the downstream contract's concern); a JSON
+        model goes through :meth:`_validate_and_repair_model`, re-prompting via
+        ``regenerate_text(prompt) -> raw string`` on validation failure."""
+        try:
+            model = self._extract_json_object(raw_text)
+        except ValueError:
+            return (raw_text or "").strip()
+        return self._validate_and_repair_model(
+            model,
+            user_text,
+            lambda prompt: self._extract_json_object(regenerate_text(prompt)),
         )
 
     def _run_few_shot_orchestration(self, user_text, generate_once):
@@ -101,8 +173,7 @@ class LLMService:
                     json.dumps(partial_outputs or {}, ensure_ascii=False, indent=2),
                 )
             return (
-                f"{shared}\n\n{body}\n\n"
-                "Return only JSON matching the step schema."
+                f"{shared}\n\n{body}\n\nReturn only JSON matching the step schema."
             ).strip()
 
         def run_json_step(step_name, prompt):
@@ -159,7 +230,9 @@ class LLMService:
             gateways_obj = {"gateways": []}
         partials["gateways"] = gateways_obj
 
-        end_obj = run_json_step("end_event", compose_prompt(pack["05_end_event_prompt.txt"]))
+        end_obj = run_json_step(
+            "end_event", compose_prompt(pack["05_end_event_prompt.txt"])
+        )
         partials["end"] = end_obj
 
         known_elements = self._merge_known_elements(
@@ -207,31 +280,13 @@ class LLMService:
                 "flows": list(flows_obj.get("flows", [])),
             }
 
-        sanitized = self.model_validator.sanitize_model(merged_obj)
-        issues = self.model_validator.validate_model(sanitized, user_text)
-
-        if issues:
-            logger.warning(
-                "few-shot validation found %d issue(s), running repair pass",
-                len(issues),
-            )
-            repair_prompt = self._build_repair_prompt(user_text, sanitized, issues)
-            try:
-                repaired_obj = run_json_step("repair", repair_prompt)
-                sanitized = self.model_validator.sanitize_model(repaired_obj)
-                remaining_issues = self.model_validator.validate_model(sanitized, user_text)
-                if remaining_issues:
-                    raise ValueError(
-                        "Few-shot repair produced invalid model: "
-                        + "; ".join(remaining_issues)
-                    )
-            except ValueError as repair_error:
-                logger.warning(
-                    "few-shot repair step failed (%s); returning pre-repair sanitized model",
-                    repair_error,
-                )
-
-        return json.dumps(sanitized, ensure_ascii=False)
+        # Same validate+repair gate the zero-shot path uses, so every strategy
+        # is validated identically. Repair re-prompts via the few-shot JSON step.
+        return self._validate_and_repair_model(
+            merged_obj,
+            user_text,
+            lambda prompt: run_json_step("repair", prompt),
+        )
 
     @staticmethod
     def _openai_generate_once(client, system_prompt, model, prompt):
@@ -308,7 +363,9 @@ class LLMService:
                         ),
                     )
                 except Exception as orchestration_error:
-                    logger.warning("Few-shot orchestration failed: %s", orchestration_error)
+                    logger.warning(
+                        "Few-shot orchestration failed: %s", orchestration_error
+                    )
                     raise
 
             logger.info("Calling OpenAI chat.completions (model=%s)", model)
@@ -319,7 +376,13 @@ class LLMService:
                 duration,
                 len(content),
             )
-            return content.strip()
+            return self._validate_and_repair_text(
+                content,
+                user_text,
+                lambda repair_prompt: self._openai_generate_once(
+                    client, system_prompt, model, repair_prompt
+                ),
+            )
         except Exception as e:
             logger.exception("OpenAI call failed: %s", e)
             raise
@@ -366,7 +429,9 @@ class LLMService:
                         ),
                     )
                 except Exception as orchestration_error:
-                    logger.warning("Few-shot orchestration failed: %s", orchestration_error)
+                    logger.warning(
+                        "Few-shot orchestration failed: %s", orchestration_error
+                    )
                     raise
 
             logger.info("Calling Gemini generate_content (model=%s)", model)
@@ -377,13 +442,26 @@ class LLMService:
                 duration,
                 len(text),
             )
-            return text.strip()
+            return self._validate_and_repair_text(
+                text,
+                user_text,
+                lambda repair_prompt: self._gemini_generate_once(
+                    gen_model, repair_prompt
+                ),
+            )
         except Exception as e:
             logger.exception("Gemini call failed: %s", e)
             raise
 
-    def generate(self, api_key, provider, model, user_text, system_prompt,
-                 prompting_strategy="zero_shot"):
+    def generate(
+        self,
+        api_key,
+        provider,
+        model,
+        user_text,
+        system_prompt,
+        prompting_strategy="zero_shot",
+    ):
         """Provider-agnostic entry point used by the v2 ``/generate`` route.
 
         Looks up the dispatch method for ``provider`` in the registry and calls

@@ -35,7 +35,9 @@ class TestV2Api(unittest.TestCase):
     # --- /models ----------------------------------------------------------
     @patch("app.api.routes.model_registry.get_cached_models")
     @patch("app.api.routes.model_registry.refresh_model_cache")
-    def test_models_returns_registry(self, mock_refresh_model_cache, mock_get_cached_models):
+    def test_models_returns_registry(
+        self, mock_refresh_model_cache, mock_get_cached_models
+    ):
         mock_get_cached_models.return_value = [
             {"provider": "openai", "model": "gpt-4o"},
             {"provider": "gemini", "model": "gemini-1.5-pro"},
@@ -69,7 +71,9 @@ class TestV2Api(unittest.TestCase):
         mock_openai.assert_called_once_with(api_key="secret-token")
 
     @patch.object(api_routes._llm_service, "generate", return_value="RAW BPMN JSON")
-    def test_generate_accepts_new_openai_model_for_supported_provider(self, mock_generate):
+    def test_generate_accepts_new_openai_model_for_supported_provider(
+        self, mock_generate
+    ):
         response = self.client.post(
             "/generate",
             headers={"Authorization": "Bearer secret-token"},
@@ -187,7 +191,9 @@ class TestV2Api(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {"raw_response": "RAW BPMN JSON"})
-        self.assertEqual(mock_generate.call_args.kwargs["prompting_strategy"], "zero_shot")
+        self.assertEqual(
+            mock_generate.call_args.kwargs["prompting_strategy"], "zero_shot"
+        )
 
     def test_generate_invalid_prompting_strategy_is_400(self):
         response = self.client.post(

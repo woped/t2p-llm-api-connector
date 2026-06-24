@@ -50,19 +50,14 @@ class TestT2PService(unittest.TestCase):
     def run_test_case(self, sentence, expected_keywords, mock_openai):
         for strategy in self.strategies:
             with self.subTest(strategy=strategy):
-                # Setup mock
-                mock_response = self.create_mock_response(
+                # Setup mock — Responses API: responses.parse(...).output_text
+                response_text = self.create_mock_response(
                     sentence, expected_keywords, strategy
                 )
-                mock_choice = MagicMock()
-                mock_choice.message.content = mock_response
+                mock_response = MagicMock()
+                mock_response.output_text = response_text
 
-                mock_completion = MagicMock()
-                mock_completion.choices = [mock_choice]
-
-                mock_openai.return_value.chat.completions.create.return_value = (
-                    mock_completion
-                )
+                mock_openai.return_value.responses.parse.return_value = mock_response
 
                 # Run test
                 result = self.llm_service.call_openai(
@@ -146,9 +141,7 @@ class TestT2PService(unittest.TestCase):
                     {"id": "startEvent1", "type": "startEvent", "name": "start"},
                     {"id": "endEvent1", "type": "endEvent", "name": "end"},
                 ],
-                "tasks": [
-                    {"id": "task1", "type": "userTask", "name": "inspect bike"}
-                ],
+                "tasks": [{"id": "task1", "type": "userTask", "name": "inspect bike"}],
                 "gateways": [],
                 "flows": [
                     {
@@ -216,9 +209,7 @@ class TestT2PService(unittest.TestCase):
                     {"id": "startEvent1", "type": "startEvent", "name": "start"},
                     {"id": "endEvent1", "type": "endEvent", "name": "end"},
                 ],
-                "tasks": [
-                    {"id": "task1", "type": "userTask", "name": "inspect bike"}
-                ],
+                "tasks": [{"id": "task1", "type": "userTask", "name": "inspect bike"}],
                 "gateways": [],
                 "flows": [
                     {
@@ -311,7 +302,9 @@ class TestT2PService(unittest.TestCase):
         )
 
         self.assertTrue(any("fewer than 2 outgoing flows" in issue for issue in issues))
-        self.assertTrue(any("no backward/loop flow detected" in issue for issue in issues))
+        self.assertTrue(
+            any("no backward/loop flow detected" in issue for issue in issues)
+        )
 
     def test_validator_does_not_treat_pickup_return_as_loop(self):
         model = {

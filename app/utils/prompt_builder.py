@@ -38,20 +38,22 @@ class PromptBuilder:
     def _load_zero_shot_prompt_template(self):
         """Load the zero-shot prompt template from text file."""
         file_path = (
-            Path(__file__).parent
-            / "zero-shot-prompts"
-            / self._ZERO_SHOT_PROMPT_FILE
+            Path(__file__).parent / "zero-shot-prompts" / self._ZERO_SHOT_PROMPT_FILE
         )
         try:
             return file_path.read_text(encoding="utf-8").strip()
         except Exception as e:
-            logger.warning("Error loading zero-shot prompt template %s: %s", file_path, e)
+            logger.warning(
+                "Error loading zero-shot prompt template %s: %s", file_path, e
+            )
             return ""
 
     def _build_zero_shot_prompt(self, user_input):
         """Build zero-shot prompt using external template with fallback."""
         if self.zero_shot_prompt_template:
-            return self.zero_shot_prompt_template.replace("{{PROCESS_TEXT}}", user_input)
+            return self.zero_shot_prompt_template.replace(
+                "{{PROCESS_TEXT}}", user_input
+            )
         return (
             "Please generate a BPMN model for the following description:\n\n"
             f"{user_input}\n\nBPMN:"
