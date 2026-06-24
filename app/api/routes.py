@@ -1,18 +1,21 @@
-import logging, time
-from app.api import bp
-from app.services.llm_service import LLMService
-from app.services import model_registry
-from flask import request, jsonify, current_app
+import logging
+import time
+
+import prometheus_client
 from flasgger import swag_from
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from flask import current_app, jsonify, request
+
+from app.api import bp
+from app.services import model_registry
+from app.services.llm_service import LLMService
 
 logger = logging.getLogger(__name__)
 
 # Prometheus Metriken
-REQUEST_COUNT = Counter(
+REQUEST_COUNT = prometheus_client.Counter(
     "http_requests_total", "Total HTTP requests", ["method", "endpoint", "status"]
 )
-REQUEST_LATENCY = Histogram(
+REQUEST_LATENCY = prometheus_client.Histogram(
     "http_request_duration_seconds", "HTTP request latency", ["method", "endpoint"]
 )
 
@@ -210,7 +213,10 @@ def models():
     try:
         provider = request.args.get("provider") or None
         model_registry.refresh_model_cache(provider=provider)
-        return jsonify({"models": model_registry.get_cached_models(provider=provider)}), 200
+        return (
+            jsonify({"models": model_registry.get_cached_models(provider=provider)}),
+            200,
+        )
     except Exception as e:
         status = "500"
         logger.exception("/models failed: %s", e)
@@ -320,7 +326,9 @@ def provider_health():
         logger.exception("/health/providers failed: %s", exc)
         return _v2_error(500, "internal_error", "Provider health check failed.")
     finally:
-        REQUEST_COUNT.labels(method="GET", endpoint="/health/providers", status=status).inc()
+        REQUEST_COUNT.labels(
+            method="GET", endpoint="/health/providers", status=status
+        ).inc()
         REQUEST_LATENCY.labels(method="GET", endpoint="/health/providers").observe(
             time.time() - start_time
         )
@@ -346,7 +354,9 @@ def readiness_health():
     start_time = time.time()
     status = "200"
     try:
-        diagnostics = model_registry.provider_connectivity(provider=None, timeout_seconds=3)
+        diagnostics = model_registry.provider_connectivity(
+            provider=None, timeout_seconds=3
+        )
         all_reachable = all(item.get("reachable") for item in diagnostics)
 
         response = {
@@ -364,7 +374,9 @@ def readiness_health():
         logger.exception("/health/ready failed: %s", exc)
         return jsonify({"ready": False, "checked_providers": []}), 503
     finally:
-        REQUEST_COUNT.labels(method="GET", endpoint="/health/ready", status=status).inc()
+        REQUEST_COUNT.labels(
+            method="GET", endpoint="/health/ready", status=status
+        ).inc()
         REQUEST_LATENCY.labels(method="GET", endpoint="/health/ready").observe(
             time.time() - start_time
         )
@@ -375,4 +387,8 @@ def metrics():
     """Expose Prometheus metrics."""
     logger.debug("Metrics scraped: /metrics")
     REQUEST_COUNT.labels(method="GET", endpoint="/metrics", status="200").inc()
-    return generate_latest(), 200, {"Content-Type": CONTENT_TYPE_LATEST}
+    return (
+        prometheus_client.generate_latest(),
+        200,
+        {"Content-Type": prometheus_client.CONTENT_TYPE_LATEST},
+    )

@@ -1,13 +1,14 @@
+import json
 import logging
 import time
-import json
-from openai import OpenAI
+
 import google.generativeai as genai
 from flask import current_app
-from app.utils.prompt_builder import PromptBuilder
+from openai import OpenAI
+
 from app.services import model_registry
 from app.services.model_validator import ModelValidator
-
+from app.utils.prompt_builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +110,7 @@ class LLMService:
                     json.dumps(partial_outputs or {}, ensure_ascii=False, indent=2),
                 )
             return (
-                f"{shared}\n\n{body}\n\n"
-                "Return only JSON matching the step schema."
+                f"{shared}\n\n{body}\n\n" "Return only JSON matching the step schema."
             ).strip()
 
         def run_json_step(step_name, prompt):
@@ -259,7 +259,9 @@ class LLMService:
             try:
                 repaired_obj = run_json_step("repair", repair_prompt)
                 sanitized = self.model_validator.sanitize_model(repaired_obj)
-                remaining_issues = self.model_validator.validate_model(sanitized, user_text)
+                remaining_issues = self.model_validator.validate_model(
+                    sanitized, user_text
+                )
                 if remaining_issues:
                     raise ValueError(
                         "Few-shot repair produced invalid model: "
@@ -354,7 +356,9 @@ class LLMService:
                         ),
                     )
                 except Exception as orchestration_error:
-                    logger.warning("Few-shot orchestration failed: %s", orchestration_error)
+                    logger.warning(
+                        "Few-shot orchestration failed: %s", orchestration_error
+                    )
                     raise
 
             logger.info("Calling OpenAI chat.completions (model=%s)", model)
@@ -417,7 +421,9 @@ class LLMService:
                         ),
                     )
                 except Exception as orchestration_error:
-                    logger.warning("Few-shot orchestration failed: %s", orchestration_error)
+                    logger.warning(
+                        "Few-shot orchestration failed: %s", orchestration_error
+                    )
                     raise
 
             logger.info("Calling Gemini generate_content (model=%s)", model)
@@ -433,8 +439,15 @@ class LLMService:
             logger.exception("Gemini call failed: %s", e)
             raise
 
-    def generate(self, api_key, provider, model, user_text, system_prompt,
-                 prompting_strategy="zero_shot"):
+    def generate(
+        self,
+        api_key,
+        provider,
+        model,
+        user_text,
+        system_prompt,
+        prompting_strategy="zero_shot",
+    ):
         """Provider-agnostic entry point used by the v2 ``/generate`` route.
 
         Looks up the dispatch method for ``provider`` in the registry and calls

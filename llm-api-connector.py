@@ -1,8 +1,9 @@
 import logging
 import sys
-from app import create_app
+
 from pythonjsonlogger import jsonlogger
 
+from app import create_app
 
 logger = logging.getLogger(__name__)
 

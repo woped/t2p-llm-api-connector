@@ -1,10 +1,15 @@
-import unittest, sys, logging, time
-from config import get_config
-from flask import Flask, request, g
-from flask_wtf.csrf import CSRFProtect
-from flasgger import Swagger
+import logging
+import sys
+import time
+import unittest
+
 import yaml
+from flasgger import Swagger
+from flask import Flask, g, request
+from flask_wtf.csrf import CSRFProtect
+
 from app.services import model_registry
+from config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +62,7 @@ def create_app(config_class=None):
 
     # CSRF-Security
     if app.config.get("WTF_CSRF_ENABLED", True):
-        csrf = CSRFProtect(app)
+        CSRFProtect(app)
         logger.info("CSRF protection enabled")
 
     # Register blueprints

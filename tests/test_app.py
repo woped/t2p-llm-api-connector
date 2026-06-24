@@ -1,8 +1,9 @@
-import unittest
-from app import create_app
-from config import TestingConfig
 import logging
 import sys
+import unittest
+
+from app import create_app
+from config import TestingConfig
 
 
 class Test_App(unittest.TestCase):

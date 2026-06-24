@@ -1,4 +1,5 @@
 import os
+
 from app.utils import LLM_SYSTEM_PROMPT
 
 
@@ -15,9 +16,7 @@ class BaseConfig:
     SYSTEM_PROMPT = LLM_SYSTEM_PROMPT
     # Optional provider hosts/base URLs (useful for proxies, gateways, or
     # enterprise endpoints).
-    OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL") or os.environ.get(
-        "OPENAI_HOST"
-    )
+    OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL") or os.environ.get("OPENAI_HOST")
     GEMINI_API_ENDPOINT = os.environ.get("GEMINI_API_ENDPOINT") or os.environ.get(
         "GEMINI_HOST"
     )

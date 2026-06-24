@@ -1,9 +1,9 @@
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from app import create_app
-from config import TestingConfig
 from app.api import routes as api_routes
+from config import TestingConfig
 
 
 class TestV2Api(unittest.TestCase):
@@ -35,7 +35,9 @@ class TestV2Api(unittest.TestCase):
     # --- /models ----------------------------------------------------------
     @patch("app.api.routes.model_registry.get_cached_models")
     @patch("app.api.routes.model_registry.refresh_model_cache")
-    def test_models_returns_registry(self, mock_refresh_model_cache, mock_get_cached_models):
+    def test_models_returns_registry(
+        self, mock_refresh_model_cache, mock_get_cached_models
+    ):
         mock_get_cached_models.return_value = [
             {"provider": "openai", "model": "gpt-4o"},
             {"provider": "gemini", "model": "gemini-1.5-pro"},
@@ -75,7 +77,9 @@ class TestV2Api(unittest.TestCase):
         payload = response.get_json()
         self.assertTrue(payload["all_reachable"])
         self.assertEqual(len(payload["providers"]), 2)
-        mock_provider_connectivity.assert_called_once_with(provider=None, timeout_seconds=5)
+        mock_provider_connectivity.assert_called_once_with(
+            provider=None, timeout_seconds=5
+        )
 
     @patch("app.api.routes.model_registry.provider_connectivity")
     def test_provider_health_unreachable_is_503(self, mock_provider_connectivity):
@@ -103,7 +107,9 @@ class TestV2Api(unittest.TestCase):
 
     @patch("app.api.routes.model_registry.provider_connectivity")
     def test_provider_health_invalid_provider_is_400(self, mock_provider_connectivity):
-        mock_provider_connectivity.side_effect = ValueError("Unsupported provider: bogus")
+        mock_provider_connectivity.side_effect = ValueError(
+            "Unsupported provider: bogus"
+        )
 
         response = self.client.get("/health/providers?provider=bogus")
         self.assertEqual(response.status_code, 400)
@@ -135,7 +141,9 @@ class TestV2Api(unittest.TestCase):
         payload = response.get_json()
         self.assertTrue(payload["ready"])
         self.assertEqual(sorted(payload["checked_providers"]), ["gemini", "openai"])
-        mock_provider_connectivity.assert_called_once_with(provider=None, timeout_seconds=3)
+        mock_provider_connectivity.assert_called_once_with(
+            provider=None, timeout_seconds=3
+        )
 
     @patch("app.api.routes.model_registry.provider_connectivity")
     def test_readiness_health_unreachable_is_503(self, mock_provider_connectivity):
@@ -180,7 +188,9 @@ class TestV2Api(unittest.TestCase):
         mock_openai.assert_called_once_with(api_key="secret-token")
 
     @patch.object(api_routes._llm_service, "generate", return_value="RAW BPMN JSON")
-    def test_generate_accepts_new_openai_model_for_supported_provider(self, mock_generate):
+    def test_generate_accepts_new_openai_model_for_supported_provider(
+        self, mock_generate
+    ):
         response = self.client.post(
             "/generate",
             headers={"Authorization": "Bearer secret-token"},
@@ -298,7 +308,9 @@ class TestV2Api(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {"raw_response": "RAW BPMN JSON"})
-        self.assertEqual(mock_generate.call_args.kwargs["prompting_strategy"], "zero_shot")
+        self.assertEqual(
+            mock_generate.call_args.kwargs["prompting_strategy"], "zero_shot"
+        )
 
     def test_generate_invalid_prompting_strategy_is_400(self):
         response = self.client.post(
