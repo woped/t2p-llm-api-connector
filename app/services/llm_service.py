@@ -90,6 +90,59 @@ class LLMService:
             f"{model_block}\n"
         )
 
+    def _validate_and_repair_model(self, model, user_text, regenerate):
+        """Sanitize -> validate (both gates) -> reject + re-prompt, up to
+        ``_MAX_REPAIR_ATTEMPTS`` times. ``regenerate(prompt) -> model dict``
+        produces a fresh model from a repair prompt. Returns the validated model
+        as a JSON string, or raises ``ValueError`` if it cannot be made valid."""
+        sanitized = self.model_validator.sanitize_model(model)
+        issues = self._validation_issues(sanitized, user_text)
+
+        repair_attempt = 0
+        while issues and repair_attempt < _MAX_REPAIR_ATTEMPTS:
+            repair_attempt += 1
+            logger.warning(
+                "validation found %d issue(s); repair attempt %d/%d",
+                len(issues),
+                repair_attempt,
+                _MAX_REPAIR_ATTEMPTS,
+            )
+            repair_prompt = self._build_repair_prompt(user_text, sanitized, issues)
+            try:
+                repaired = regenerate(repair_prompt)
+            except ValueError as repair_error:
+                logger.warning(
+                    "repair step failed (%s); keeping last sanitized model",
+                    repair_error,
+                )
+                break
+            sanitized = self.model_validator.sanitize_model(repaired)
+            issues = self._validation_issues(sanitized, user_text)
+
+        if issues:
+            # Repair budget exhausted and still invalid: reject -- our system
+            # never emits a model that fails validation.
+            raise ValueError(
+                f"Model still invalid after {repair_attempt} repair attempt(s): "
+                + "; ".join(issues)
+            )
+        return json.dumps(sanitized, ensure_ascii=False)
+
+    def _validate_and_repair_text(self, raw_text, user_text, regenerate_text):
+        """Strategy-independent gate for a raw LLM response. Non-JSON output is
+        returned as-is (JSON-ness is the downstream contract's concern); a JSON
+        model goes through :meth:`_validate_and_repair_model`, re-prompting via
+        ``regenerate_text(prompt) -> raw string`` on validation failure."""
+        try:
+            model = self._extract_json_object(raw_text)
+        except ValueError:
+            return (raw_text or "").strip()
+        return self._validate_and_repair_model(
+            model,
+            user_text,
+            lambda prompt: self._extract_json_object(regenerate_text(prompt)),
+        )
+
     def _run_few_shot_orchestration(self, user_text, generate_once):
         """Run real multi-call few-shot extraction and merge with validation."""
         pack = self.prompt_builder.few_shot_prompt_pack
@@ -227,42 +280,13 @@ class LLMService:
                 "flows": list(flows_obj.get("flows", [])),
             }
 
-        sanitized = self.model_validator.sanitize_model(merged_obj)
-        issues = self._validation_issues(sanitized, user_text)
-
-        # Repair loop: sanitize -> validate (both gates) -> reject+re-prompt,
-        # up to _MAX_REPAIR_ATTEMPTS times. Sanitization is the cheap
-        # deterministic cleanup; our validators stay the authoritative gate.
-        repair_attempt = 0
-        while issues and repair_attempt < _MAX_REPAIR_ATTEMPTS:
-            repair_attempt += 1
-            logger.warning(
-                "few-shot validation found %d issue(s); repair attempt %d/%d",
-                len(issues),
-                repair_attempt,
-                _MAX_REPAIR_ATTEMPTS,
-            )
-            repair_prompt = self._build_repair_prompt(user_text, sanitized, issues)
-            try:
-                repaired_obj = run_json_step("repair", repair_prompt)
-            except ValueError as repair_error:
-                logger.warning(
-                    "few-shot repair step failed (%s); keeping last sanitized model",
-                    repair_error,
-                )
-                break
-            sanitized = self.model_validator.sanitize_model(repaired_obj)
-            issues = self._validation_issues(sanitized, user_text)
-
-        if issues:
-            # Exhausted the repair budget and the model still violates the rules:
-            # reject (our system never emits a model that fails validation).
-            raise ValueError(
-                f"Model still invalid after {repair_attempt} repair attempt(s): "
-                + "; ".join(issues)
-            )
-
-        return json.dumps(sanitized, ensure_ascii=False)
+        # Same validate+repair gate the zero-shot path uses, so every strategy
+        # is validated identically. Repair re-prompts via the few-shot JSON step.
+        return self._validate_and_repair_model(
+            merged_obj,
+            user_text,
+            lambda prompt: run_json_step("repair", prompt),
+        )
 
     @staticmethod
     def _openai_generate_once(client, system_prompt, model, prompt):
@@ -352,7 +376,13 @@ class LLMService:
                 duration,
                 len(content),
             )
-            return content.strip()
+            return self._validate_and_repair_text(
+                content,
+                user_text,
+                lambda repair_prompt: self._openai_generate_once(
+                    client, system_prompt, model, repair_prompt
+                ),
+            )
         except Exception as e:
             logger.exception("OpenAI call failed: %s", e)
             raise
@@ -412,7 +442,13 @@ class LLMService:
                 duration,
                 len(text),
             )
-            return text.strip()
+            return self._validate_and_repair_text(
+                text,
+                user_text,
+                lambda repair_prompt: self._gemini_generate_once(
+                    gen_model, repair_prompt
+                ),
+            )
         except Exception as e:
             logger.exception("Gemini call failed: %s", e)
             raise
