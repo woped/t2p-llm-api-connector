@@ -1,11 +1,24 @@
 import unittest
 from unittest.mock import patch, MagicMock
 import json
+import os
 import config
 from app.services.llm_service import LLMService
 from app.services.model_validator import ModelValidator
 
 
+RUN_LLM_TESTS = os.getenv("RUN_LLM_TESTS", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+
+@unittest.skipUnless(
+    RUN_LLM_TESTS,
+    "LLM tests are disabled by default. Set RUN_LLM_TESTS=true for local runs.",
+)
 class TestT2PService(unittest.TestCase):
     def setUp(self):
         config_instance = config.get_config()()

@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -10,6 +11,18 @@ from config import get_config
 from app.services.llm_service import LLMService
 
 
+RUN_LLM_TESTS = os.getenv("RUN_LLM_TESTS", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+
+@unittest.skipUnless(
+    RUN_LLM_TESTS,
+    "LLM tests are disabled by default. Set RUN_LLM_TESTS=true for local runs.",
+)
 class TestMockedProcesses(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
