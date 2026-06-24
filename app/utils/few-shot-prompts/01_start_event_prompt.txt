@@ -1,0 +1,26 @@
+Task: Detect the single start event from the process text.
+
+Input:
+{{PROCESS_TEXT}}
+
+Output schema:
+{
+  "events": [
+    {"id": "startEvent1", "type": "startEvent", "name": "..."}
+  ]
+}
+
+Rules:
+- Return exactly one startEvent if a trigger is implied.
+- If no explicit trigger exists, infer a neutral trigger name like "process starts".
+- Return no end events, tasks, gateways, or flows in this call.
+
+Few-shot example:
+Input:
+"A customer submits an order. The clerk validates it and sends confirmation."
+Output:
+{
+  "events": [
+    {"id": "startEvent1", "type": "startEvent", "name": "order submitted"}
+  ]
+}

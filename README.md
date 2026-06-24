@@ -35,7 +35,8 @@ flask run
 ```
 
 The application will be accessible at http://localhost:5000.  
-The interactive API documentation (Swagger UI) is available at http://localhost:5000/docs.
+The interactive API documentation (Swagger UI) is available at http://localhost:5000/docs/.
+The generated OpenAPI specification is available at http://localhost:5000/openapi.json.
 
 > **Note:** `FLASK_ENV` is still used by this project's `config.py` to select the active configuration class (`development` / `production` / `testing`). It is separate from Flask's own debug flag and is already pre-configured in `.flaskenv` for local development — no manual export is needed.
 
@@ -57,7 +58,17 @@ Example request body for `POST /generate`:
 }
 ```
 
-Use `GET /models` to retrieve the list of supported provider/model pairs. See `docs/openapi.yaml` or the Swagger UI at `/docs` for the full API contract.
+For supported providers, the connector accepts any submitted model name and forwards it to
+the provider. Newly released provider models therefore do not require a code change in the
+connector.
+
+`prompting_strategy` is optional. Supported values are `zero_shot` and `few_shot`.
+If omitted, `zero_shot` is used by default.
+
+Use `GET /models` to retrieve the list of provider/model pairs discovered from the backing
+providers. If you pass `Authorization: Bearer <api_key>`, the connector can use that key for
+discovery; otherwise it uses configured environment keys when available. See `/openapi.json`
+or the Swagger UI at `/docs/` for the full API contract.
 
 ## Running the Application with Docker
 

@@ -1,0 +1,97 @@
+Task: Detect gateways and their control-flow semantics from the process text.
+
+Input:
+{{PROCESS_TEXT}}
+
+Output schema:
+{
+  "gateways": [
+    {
+      "id": "gateway1",
+      "type": "exclusiveGateway|parallelGateway",
+      "name": "...",
+      "role": "split|join",
+      "branch_count": 2,
+      "evidence": "exact condition or synchronization cue from text",
+      "branch_cues": ["...", "..."],
+      "paired_gateway_id": "gateway2"
+    }
+  ]
+}
+
+Field meaning:
+- role:
+  - split = flow diverges into multiple alternatives or parallel branches
+  - join = previously split branches converge before continuing
+- branch_count:
+  - number of outgoing branches for splits
+  - number of incoming branches for joins
+- evidence:
+  - exact phrase or short text fragment that justifies the gateway
+- branch_cues:
+  - short labels or cues describing the alternatives or parallel branches
+  - for loops, include cues such as "defect remains" and "passes service standard"
+- paired_gateway_id:
+  - ID of the matching join for a split, or matching split for a join, if inferable
+
+Rules:
+- Use exclusiveGateway for either/or branching, decision points, retries, or loop conditions.
+- Use parallelGateway for simultaneous branches or synchronization.
+- Create only gateways justified by explicit or strongly implied control-flow cues.
+- If none are present, return an empty list.
+- Every split gateway must represent at least two branches. Never emit a split that behaves like a pass-through node.
+- For every exclusive split, identify the alternative branch cues.
+- For every parallel split, identify the concurrent branch cues.
+- Add a join gateway when branches clearly converge back into one downstream path, even if the join is only implied by the narrative.
+- If the text contains retry, retest, repeat, return, loop, or until language, model an exclusive split for the loop condition and include cues for both the repeat path and the forward path.
+- Preserve narrative position: place split gateways where branching begins and join gateways where branches converge.
+- Keep gateway order stable by first textual appearance to support deterministic flow connection in later steps.
+- Prefer explicit control-flow semantics over minimal gateway counts. It is better to return the necessary split and join pair than to collapse the structure into one gateway.
+
+Few-shot example 1:
+Input:
+"After registration, the process checks credit and verifies documents in parallel. Then both results are merged."
+Output:
+{
+  "gateways": [
+    {
+      "id": "gateway1",
+      "type": "parallelGateway",
+      "name": "start parallel checks",
+      "role": "split",
+      "branch_count": 2,
+      "evidence": "in parallel",
+      "branch_cues": ["check credit", "verify documents"],
+      "paired_gateway_id": "gateway2"
+    },
+    {
+      "id": "gateway2",
+      "type": "parallelGateway",
+      "name": "join parallel checks",
+      "role": "join",
+      "branch_count": 2,
+      "evidence": "both results are merged",
+      "branch_cues": ["credit checked", "documents verified"],
+      "paired_gateway_id": "gateway1"
+    }
+  ]
+}
+
+Few-shot example 2:
+Input:
+"The mechanic tests the bike. If a defect remains, the bike returns to the stand for correction and is tested again until it passes."
+Output:
+{
+  "gateways": [
+    {
+      "id": "gateway1",
+      "type": "exclusiveGateway",
+      "name": "defect remains?",
+      "role": "split",
+      "branch_count": 2,
+      "evidence": "If a defect remains",
+      "branch_cues": ["defect remains", "passes test"],
+      "paired_gateway_id": ""
+    }
+  ]
+}

@@ -1,8 +1,10 @@
-import click, unittest, sys, logging, time, os
+import unittest, sys, logging, time
 from config import get_config
-from flask import Flask, request, g, send_from_directory
+from flask import Flask, request, g
 from flask_wtf.csrf import CSRFProtect
-from flask_swagger_ui import get_swaggerui_blueprint
+from flasgger import Swagger
+import yaml
+from app.services import model_registry
 
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
@@ -42,21 +44,60 @@ def create_app(config_class=None):
     app.register_blueprint(api_bp)
     logger.info("Blueprints registered")
 
-    # Swagger UI  — served at /docs, spec sourced from /openapi.yaml
-    SWAGGER_URL = "/docs"
-    SPEC_URL = "/openapi.yaml"
-    swaggerui_bp = get_swaggerui_blueprint(
-        SWAGGER_URL,
-        SPEC_URL,
-        config={"app_name": "LLM API Connector"},
-    )
-    app.register_blueprint(swaggerui_bp, url_prefix=SWAGGER_URL)
+    # Warm the provider model cache once at startup using configured provider
+    # environment keys. Subsequent refreshes are triggered explicitly by /models.
+    try:
+        model_registry.refresh_model_cache()
+        logger.info("Provider model cache warmed at startup")
+    except Exception as e:
+        logger.warning("Failed to warm provider model cache at startup: %s", e)
 
-    _docs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "docs")
+    # Flasgger / OpenAPI setup.
+    swagger_template = {
+        "openapi": "3.0.2",
+        "info": {
+            "title": "LLM API Connector",
+            "version": "1.0.0",
+            "description": "Internal API used by t2p-2.0 to call LLM providers.",
+        },
+        "components": {
+            "securitySchemes": {
+                "bearerAuth": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "description": "Provider API key as Authorization: Bearer <api_key>.",
+                }
+            }
+        },
+    }
+    swagger_config = {
+        "headers": [],
+        "specs": [
+            {
+                "endpoint": "openapi",
+                "route": "/openapi.json",
+                "rule_filter": lambda rule: True,
+                "model_filter": lambda tag: True,
+            }
+        ],
+        "static_url_path": "/flasgger_static",
+        "swagger_ui": True,
+        "specs_route": "/docs/",
+    }
+    swagger = Swagger(app, template=swagger_template, config=swagger_config)
 
     @app.route("/openapi.yaml")
-    def serve_openapi_yaml():
-        return send_from_directory(_docs_dir, "openapi.yaml")
+    def openapi_yaml_alias():
+        def _to_plain_types(value):
+            if isinstance(value, dict):
+                return {k: _to_plain_types(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [_to_plain_types(item) for item in value]
+            return value
+
+        openapi_spec = _to_plain_types(swagger.get_apispecs(endpoint="openapi"))
+        openapi_yaml = yaml.safe_dump(openapi_spec, sort_keys=False, allow_unicode=True)
+        return app.response_class(openapi_yaml, mimetype="application/yaml")
 
     # Request logging
     @app.before_request

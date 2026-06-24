@@ -3,6 +3,7 @@ from app.api import bp
 from app.services.llm_service import LLMService
 from app.services import model_registry
 from flask import request, jsonify, current_app
+from flasgger import swag_from
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 # Logging konfigurieren
@@ -22,6 +23,7 @@ REQUEST_LATENCY = Histogram(
 # (the per-call provider clients are still created inside each call_* method,
 # keeping per-request API keys isolated).
 _llm_service = LLMService()
+_SUPPORTED_PROMPTING_STRATEGIES = {"zero_shot", "few_shot"}
 
 
 # --- v2 contract API (consumed by t2p-2.0) --------------------------------
@@ -51,6 +53,51 @@ def _extract_bearer_key():
 
 
 @bp.route("/generate", methods=["POST"])
+@swag_from(
+    {
+        "tags": ["v2-contract"],
+        "summary": "Generate process model",
+        "description": "Generate a structured BPMN JSON model from process text.",
+        "security": [{"bearerAuth": []}],
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["user_text", "provider", "model"],
+                        "properties": {
+                            "user_text": {"type": "string"},
+                            "provider": {"type": "string"},
+                            "model": {"type": "string"},
+                            "prompting_strategy": {
+                                "type": "string",
+                                "enum": ["zero_shot", "few_shot"],
+                                "default": "zero_shot",
+                            },
+                        },
+                    }
+                }
+            },
+        },
+        "responses": {
+            "200": {
+                "description": "Successful provider response",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {"raw_response": {"type": "string"}},
+                        }
+                    }
+                },
+            },
+            "400": {"description": "Invalid request or provider/model"},
+            "401": {"description": "Missing or malformed Authorization header"},
+            "500": {"description": "Upstream provider failure"},
+        },
+    }
+)
 def generate():
     """Generate a structured BPMN-JSON process model from a description.
 
@@ -84,12 +131,21 @@ def generate():
 
         provider = data["provider"]
         model = data["model"]
+        prompting_strategy = data.get("prompting_strategy", "zero_shot")
         if not model_registry.is_valid(provider, model):
             status = "400"
             return _v2_error(
                 400,
                 "invalid_provider",
                 f"Unknown provider/model: {provider}/{model}.",
+            )
+        if prompting_strategy not in _SUPPORTED_PROMPTING_STRATEGIES:
+            status = "400"
+            allowed = ", ".join(sorted(_SUPPORTED_PROMPTING_STRATEGIES))
+            return _v2_error(
+                400,
+                "invalid_request",
+                f"Invalid prompting_strategy '{prompting_strategy}'. Allowed values: {allowed}.",
             )
 
         logger.info(
@@ -101,7 +157,7 @@ def generate():
             model=model,
             user_text=data["user_text"],
             system_prompt=current_app.config["SYSTEM_PROMPT"],
-            prompting_strategy=data.get("prompting_strategy", "few_shot"),
+            prompting_strategy=prompting_strategy,
         )
         return jsonify({"raw_response": raw_response}), 200
 
@@ -117,12 +173,46 @@ def generate():
 
 
 @bp.route("/models", methods=["GET"])
+@swag_from(
+    {
+        "tags": ["v2-contract"],
+        "summary": "List models",
+        "description": "Return supported provider/model pairs.",
+        "responses": {
+            "200": {
+                "description": "Models listed",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "models": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "provider": {"type": "string"},
+                                            "model": {"type": "string"},
+                                        },
+                                    },
+                                }
+                            },
+                        }
+                    }
+                },
+            },
+            "500": {"description": "Internal error"},
+        },
+    }
+)
 def models():
     """Return the advertised provider/model pairs from the registry."""
     start_time = time.time()
     status = "200"
     try:
-        return jsonify({"models": model_registry.list_models()}), 200
+        provider = request.args.get("provider") or None
+        model_registry.refresh_model_cache(provider=provider)
+        return jsonify({"models": model_registry.get_cached_models(provider=provider)}), 200
     except Exception as e:
         status = "500"
         logger.exception("/models failed: %s", e)
@@ -135,6 +225,26 @@ def models():
 
 
 @bp.route("/_/_/echo")
+@swag_from(
+    {
+        "tags": ["operations"],
+        "summary": "Health check",
+        "description": "Operational liveness endpoint.",
+        "responses": {
+            "200": {
+                "description": "Service is reachable",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {"success": {"type": "boolean"}},
+                        }
+                    }
+                },
+            }
+        },
+    }
+)
 def echo():
     """Health check endpoint"""
     logger.debug("Health check hit: /_/_/echo")

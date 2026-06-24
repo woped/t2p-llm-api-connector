@@ -39,6 +39,12 @@ Events:
 
 Tasks/Activities:
 - List all tasks and activities involved in the process along with a brief description of each.
+- Task names MUST be concise verb-object phrases in infinitive/base form, for example:
+  • "repair bicycle"
+  • "issue receipt"
+  • "return bike"
+- Prefer lowercase task names and avoid helper prefixes/suffixes such as
+  "[UserTask]", "[ServiceTask]", "Task:", numbering, or role labels.
 
 Gateways (Splitting/Joining Points):
 - Exclusive Gateways: Describe any points within the process where the flow can ONLY go in ONE direction.
