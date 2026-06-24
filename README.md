@@ -58,10 +58,17 @@ Example request body for `POST /generate`:
 }
 ```
 
+For supported providers, the connector accepts any submitted model name and forwards it to
+the provider. Newly released provider models therefore do not require a code change in the
+connector.
+
 `prompting_strategy` is optional. Supported values are `zero_shot` and `few_shot`.
 If omitted, `zero_shot` is used by default.
 
-Use `GET /models` to retrieve the list of supported provider/model pairs. See `/openapi.json` or the Swagger UI at `/docs/` for the full API contract.
+Use `GET /models` to retrieve the list of provider/model pairs discovered from the backing
+providers. If you pass `Authorization: Bearer <api_key>`, the connector can use that key for
+discovery; otherwise it uses configured environment keys when available. See `/openapi.json`
+or the Swagger UI at `/docs/` for the full API contract.
 
 ## Running the Application with Docker
 

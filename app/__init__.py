@@ -4,6 +4,7 @@ from flask import Flask, request, g
 from flask_wtf.csrf import CSRFProtect
 from flasgger import Swagger
 import yaml
+from app.services import model_registry
 
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
@@ -42,6 +43,14 @@ def create_app(config_class=None):
 
     app.register_blueprint(api_bp)
     logger.info("Blueprints registered")
+
+    # Warm the provider model cache once at startup using configured provider
+    # environment keys. Subsequent refreshes are triggered explicitly by /models.
+    try:
+        model_registry.refresh_model_cache()
+        logger.info("Provider model cache warmed at startup")
+    except Exception as e:
+        logger.warning("Failed to warm provider model cache at startup: %s", e)
 
     # Flasgger / OpenAPI setup.
     swagger_template = {

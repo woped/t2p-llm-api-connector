@@ -16,6 +16,11 @@ Output schema:
 Rules:
 - Use only element IDs that exist in known elements.
 - Respect narrative order and gateway semantics.
+- Use the gateway metadata in known elements as a hard control-flow contract:
+  - role = split or join
+  - branch_count = expected number of split branches or joined branches
+  - branch_cues = branch meanings that must be represented in the flow structure
+  - paired_gateway_id = matching split/join when provided
 - Include loops only when explicitly described.
 - Ensure each flow id is unique.
 - Connect elements using this deterministic order policy:
@@ -23,13 +28,27 @@ Rules:
   2) then tasks/gateways in their canonical extraction order,
   3) endEvent last.
 - Build a main forward path before adding branch edges.
-- For exclusive branching, connect split -> each branch head -> merge or end.
-- For parallel branching, connect split -> all parallel branch heads and ensure a
-  join gateway before continuing to downstream elements.
+- For every split gateway, create one outgoing flow per branch. Never leave a split
+  with only one outgoing flow.
+- For exclusive branching, connect split -> each branch head -> paired join or end.
+- For parallel branching, connect split -> all parallel branch heads and ensure the
+  paired join gateway receives all branch completions before continuing.
+- For join gateways, create the required number of incoming flows according to
+  branch_count when that count is provided.
+- If paired_gateway_id is present, use it to connect the split and join consistently.
+- If a gateway branch_cues list includes retry/retest/pass/fail semantics, build
+  the loop explicitly:
+  - split -> failure/correction branch -> back edge to retest point or loop condition
+  - split -> success branch -> forward progress
 - Do not create backward edges unless the text explicitly indicates repetition,
   retry, or loop-back behavior.
 - Before returning, verify every non-start element is reachable from startEvent1 and
   every non-end terminal path reaches endEvent1.
+- Before returning, verify:
+  - every split gateway has outgoing flow count >= 2
+  - every join gateway has incoming flow count >= 2 when branch_count >= 2
+  - flows reflect the gateway branch_cues rather than collapsing branches into a
+    single pass-through path
 
 Few-shot example:
 Input text:
@@ -38,7 +57,18 @@ Known elements:
 {
   "events": [{"id": "startEvent1", "type": "startEvent", "name": "order submitted"}, {"id": "endEvent1", "type": "endEvent", "name": "process completed"}],
   "tasks": [{"id": "task1", "type": "serviceTask", "name": "check stock"}, {"id": "task2", "type": "userTask", "name": "confirm order"}, {"id": "task3", "type": "userTask", "name": "reject order"}],
-  "gateways": [{"id": "gateway1", "type": "exclusiveGateway", "name": "stock available?"}]
+  "gateways": [
+    {
+      "id": "gateway1",
+      "type": "exclusiveGateway",
+      "name": "stock available?",
+      "role": "split",
+      "branch_count": 2,
+      "evidence": "If stock is available; otherwise",
+      "branch_cues": ["stock available", "stock unavailable"],
+      "paired_gateway_id": ""
+    }
+  ]
 }
 Output:
 {
@@ -49,5 +79,39 @@ Output:
     {"id": "flow4", "type": "sequenceFlow", "source": "gateway1", "target": "task3"},
     {"id": "flow5", "type": "sequenceFlow", "source": "task2", "target": "endEvent1"},
     {"id": "flow6", "type": "sequenceFlow", "source": "task3", "target": "endEvent1"}
+  ]
+}
+
+Few-shot example 2:
+Input text:
+"The mechanic performs a test ride. If a defect remains, the bike returns for correction and is tested again until it passes."
+Known elements:
+{
+  "events": [{"id": "startEvent1", "type": "startEvent", "name": "test starts"}, {"id": "endEvent1", "type": "endEvent", "name": "bike passes test"}],
+  "tasks": [
+    {"id": "task1", "type": "userTask", "name": "perform test ride"},
+    {"id": "task2", "type": "userTask", "name": "correct defect"}
+  ],
+  "gateways": [
+    {
+      "id": "gateway1",
+      "type": "exclusiveGateway",
+      "name": "defect remains?",
+      "role": "split",
+      "branch_count": 2,
+      "evidence": "If a defect remains ... until it passes",
+      "branch_cues": ["defect remains", "passes test"],
+      "paired_gateway_id": ""
+    }
+  ]
+}
+Output:
+{
+  "flows": [
+    {"id": "flow1", "type": "sequenceFlow", "source": "startEvent1", "target": "task1"},
+    {"id": "flow2", "type": "sequenceFlow", "source": "task1", "target": "gateway1"},
+    {"id": "flow3", "type": "sequenceFlow", "source": "gateway1", "target": "task2"},
+    {"id": "flow4", "type": "sequenceFlow", "source": "task2", "target": "task1"},
+    {"id": "flow5", "type": "sequenceFlow", "source": "gateway1", "target": "endEvent1"}
   ]
 }

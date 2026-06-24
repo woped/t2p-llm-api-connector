@@ -40,6 +40,9 @@ The provider API key is supplied in the `Authorization` header. The connector bu
 prompt, dispatches the call to the selected `provider`/`model`, and returns the raw
 provider response.
 
+For supported providers, the connector accepts any submitted `model` string and lets the
+provider validate whether that model is actually available for the supplied API key.
+
 Error codes: `invalid_request`, `invalid_provider` (400); `unauthorized` (401);
 `upstream_error`, `internal_error` (500). A missing or malformed `Authorization`
 header returns `401 unauthorized`; a non-JSON body or a missing/empty required
@@ -50,3 +53,8 @@ field returns `400 invalid_request`.
 ```
 Response 200: { "models": [{ "provider": string, "model": string }] }
 ```
+
+`GET /models` performs best-effort provider-backed model discovery. If an
+`Authorization: Bearer <api_key>` header is supplied, the connector may use that key for
+discovery; otherwise it uses configured provider environment variables when available and
+falls back to a small built-in model list if discovery is unavailable.

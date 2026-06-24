@@ -1,7 +1,9 @@
 import unittest
 from unittest.mock import patch, MagicMock
+import json
 import config
 from app.services.llm_service import LLMService
+from app.services.model_validator import ModelValidator
 
 
 class TestT2PService(unittest.TestCase):
@@ -11,6 +13,7 @@ class TestT2PService(unittest.TestCase):
         self.system_prompt = config_instance.SYSTEM_PROMPT
         self.strategies = ["few_shot", "zero_shot"]
         self.llm_service = LLMService()
+        self.model_validator = ModelValidator()
 
     def create_mock_response(self, sentence, expected_keywords, strategy):
         """Create a realistic mock response that contains the expected keywords."""
@@ -101,6 +104,251 @@ class TestT2PService(unittest.TestCase):
                 user_text="x",
                 system_prompt=self.system_prompt,
             )
+
+    @patch("app.services.llm_service.OpenAI")
+    def test_few_shot_openai_runs_multi_call_orchestration(self, mock_openai):
+        responses = [
+            {"events": [{"id": "startEvent1", "type": "startEvent", "name": "start"}]},
+            {"tasks": [{"id": "task1", "type": "userTask", "name": "inspect bike"}]},
+            {"gateways": []},
+            {"events": [{"id": "endEvent1", "type": "endEvent", "name": "end"}]},
+            {
+                "flows": [
+                    {
+                        "id": "flow1",
+                        "type": "sequenceFlow",
+                        "source": "startEvent1",
+                        "target": "task1",
+                    },
+                    {
+                        "id": "flow2",
+                        "type": "sequenceFlow",
+                        "source": "task1",
+                        "target": "endEvent1",
+                    },
+                ]
+            },
+            {
+                "events": [
+                    {"id": "startEvent1", "type": "startEvent", "name": "start"},
+                    {"id": "endEvent1", "type": "endEvent", "name": "end"},
+                ],
+                "tasks": [
+                    {"id": "task1", "type": "userTask", "name": "inspect bike"}
+                ],
+                "gateways": [],
+                "flows": [
+                    {
+                        "id": "flow1",
+                        "type": "sequenceFlow",
+                        "source": "startEvent1",
+                        "target": "task1",
+                    },
+                    {
+                        "id": "flow2",
+                        "type": "sequenceFlow",
+                        "source": "task1",
+                        "target": "endEvent1",
+                    },
+                ],
+            },
+        ]
+
+        mock_openai.return_value.chat.completions.create.side_effect = [
+            MagicMock(choices=[MagicMock(message=MagicMock(content=json.dumps(r)))])
+            for r in responses
+        ]
+
+        result = self.llm_service.call_openai(
+            self.api_key,
+            self.system_prompt,
+            "A mechanic inspects a bike and then completes the repair.",
+            "few_shot",
+        )
+
+        parsed = json.loads(result)
+        self.assertIn("events", parsed)
+        self.assertIn("tasks", parsed)
+        self.assertIn("flows", parsed)
+        self.assertGreaterEqual(
+            mock_openai.return_value.chat.completions.create.call_count, 6
+        )
+
+    @patch("app.services.llm_service.OpenAI")
+    def test_few_shot_retries_when_step_returns_non_json(self, mock_openai):
+        responses = [
+            {"events": [{"id": "startEvent1", "type": "startEvent", "name": "start"}]},
+            {"tasks": [{"id": "task1", "type": "userTask", "name": "inspect bike"}]},
+            {"gateways": []},
+            {"events": [{"id": "endEvent1", "type": "endEvent", "name": "end"}]},
+            "I cannot comply with that format.",
+            {
+                "flows": [
+                    {
+                        "id": "flow1",
+                        "type": "sequenceFlow",
+                        "source": "startEvent1",
+                        "target": "task1",
+                    },
+                    {
+                        "id": "flow2",
+                        "type": "sequenceFlow",
+                        "source": "task1",
+                        "target": "endEvent1",
+                    },
+                ]
+            },
+            {
+                "events": [
+                    {"id": "startEvent1", "type": "startEvent", "name": "start"},
+                    {"id": "endEvent1", "type": "endEvent", "name": "end"},
+                ],
+                "tasks": [
+                    {"id": "task1", "type": "userTask", "name": "inspect bike"}
+                ],
+                "gateways": [],
+                "flows": [
+                    {
+                        "id": "flow1",
+                        "type": "sequenceFlow",
+                        "source": "startEvent1",
+                        "target": "task1",
+                    },
+                    {
+                        "id": "flow2",
+                        "type": "sequenceFlow",
+                        "source": "task1",
+                        "target": "endEvent1",
+                    },
+                ],
+            },
+        ]
+
+        side_effect = []
+        for item in responses:
+            if isinstance(item, str):
+                content = item
+            else:
+                content = json.dumps(item)
+            side_effect.append(
+                MagicMock(choices=[MagicMock(message=MagicMock(content=content))])
+            )
+
+        mock_openai.return_value.chat.completions.create.side_effect = side_effect
+
+        result = self.llm_service.call_openai(
+            self.api_key,
+            self.system_prompt,
+            "A mechanic inspects a bike and then completes the repair.",
+            "few_shot",
+        )
+
+        parsed = json.loads(result)
+        self.assertIn("flows", parsed)
+        self.assertGreaterEqual(
+            mock_openai.return_value.chat.completions.create.call_count, 7
+        )
+
+    def test_validator_rejects_fake_split_gateway_and_missing_loop(self):
+        model = {
+            "events": [
+                {"id": "startEvent1", "type": "startEvent", "name": "start"},
+                {"id": "endEvent1", "type": "endEvent", "name": "end"},
+            ],
+            "tasks": [
+                {"id": "task1", "type": "userTask", "name": "test bike"},
+                {"id": "task2", "type": "userTask", "name": "correct defect"},
+            ],
+            "gateways": [
+                {
+                    "id": "gateway1",
+                    "type": "exclusiveGateway",
+                    "name": "defect remains?",
+                    "role": "split",
+                    "branch_count": 2,
+                    "branch_cues": ["defect remains", "passes test"],
+                    "paired_gateway_id": "",
+                }
+            ],
+            "flows": [
+                {
+                    "id": "flow1",
+                    "type": "sequenceFlow",
+                    "source": "startEvent1",
+                    "target": "task1",
+                },
+                {
+                    "id": "flow2",
+                    "type": "sequenceFlow",
+                    "source": "task1",
+                    "target": "gateway1",
+                },
+                {
+                    "id": "flow3",
+                    "type": "sequenceFlow",
+                    "source": "gateway1",
+                    "target": "endEvent1",
+                },
+            ],
+        }
+
+        issues = self.model_validator.validate_model(
+            model,
+            "If a defect remains, the bike returns for correction and is retested until it passes.",
+        )
+
+        self.assertTrue(any("fewer than 2 outgoing flows" in issue for issue in issues))
+        self.assertTrue(any("no backward/loop flow detected" in issue for issue in issues))
+
+    def test_validator_does_not_treat_pickup_return_as_loop(self):
+        model = {
+            "events": [
+                {"id": "startEvent1", "type": "startEvent", "name": "start"},
+                {"id": "endEvent1", "type": "endEvent", "name": "end"},
+            ],
+            "tasks": [
+                {"id": "task1", "type": "userTask", "name": "take deposit"},
+                {"id": "task2", "type": "userTask", "name": "repair bike"},
+                {"id": "task3", "type": "userTask", "name": "pickup and pay"},
+            ],
+            "gateways": [],
+            "flows": [
+                {
+                    "id": "flow1",
+                    "type": "sequenceFlow",
+                    "source": "startEvent1",
+                    "target": "task1",
+                },
+                {
+                    "id": "flow2",
+                    "type": "sequenceFlow",
+                    "source": "task1",
+                    "target": "task2",
+                },
+                {
+                    "id": "flow3",
+                    "type": "sequenceFlow",
+                    "source": "task2",
+                    "target": "task3",
+                },
+                {
+                    "id": "flow4",
+                    "type": "sequenceFlow",
+                    "source": "task3",
+                    "target": "endEvent1",
+                },
+            ],
+        }
+
+        issues = self.model_validator.validate_model(
+            model,
+            "Customers return on the advised date to pay and pick up the repaired bike.",
+        )
+
+        self.assertFalse(
+            any("Loop language found" in issue for issue in issues),
+            msg=f"Unexpected loop issue(s): {issues}",
+        )
 
 
 if __name__ == "__main__":

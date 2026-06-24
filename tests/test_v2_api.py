@@ -7,7 +7,8 @@ from app.api import routes as api_routes
 
 
 class TestV2Api(unittest.TestCase):
-    def setUp(self):
+    @patch("app.model_registry.refresh_model_cache")
+    def setUp(self, mock_refresh_model_cache):
         self.app = create_app(TestingConfig)
         self.client = self.app.test_client()
         self.app_context = self.app.app_context()
@@ -32,7 +33,13 @@ class TestV2Api(unittest.TestCase):
         mock_genai.GenerativeModel.return_value = mock_model
 
     # --- /models ----------------------------------------------------------
-    def test_models_returns_registry(self):
+    @patch("app.api.routes.model_registry.get_cached_models")
+    @patch("app.api.routes.model_registry.refresh_model_cache")
+    def test_models_returns_registry(self, mock_refresh_model_cache, mock_get_cached_models):
+        mock_get_cached_models.return_value = [
+            {"provider": "openai", "model": "gpt-4o"},
+            {"provider": "gemini", "model": "gemini-1.5-pro"},
+        ]
         response = self.client.get("/models")
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
@@ -40,6 +47,8 @@ class TestV2Api(unittest.TestCase):
         pairs = {(m["provider"], m["model"]) for m in data["models"]}
         self.assertIn(("openai", "gpt-4o"), pairs)
         self.assertIn(("gemini", "gemini-1.5-pro"), pairs)
+        mock_refresh_model_cache.assert_called_once_with(provider=None)
+        mock_get_cached_models.assert_called_once_with(provider=None)
 
     # --- /generate success ------------------------------------------------
     @patch("app.services.llm_service.OpenAI")
@@ -58,6 +67,21 @@ class TestV2Api(unittest.TestCase):
         self.assertEqual(response.get_json(), {"raw_response": "RAW BPMN JSON"})
         # The API key is taken from the header, never the body.
         mock_openai.assert_called_once_with(api_key="secret-token")
+
+    @patch.object(api_routes._llm_service, "generate", return_value="RAW BPMN JSON")
+    def test_generate_accepts_new_openai_model_for_supported_provider(self, mock_generate):
+        response = self.client.post(
+            "/generate",
+            headers={"Authorization": "Bearer secret-token"},
+            json={
+                "user_text": "describe a process",
+                "provider": "openai",
+                "model": "gpt-5-mini",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"raw_response": "RAW BPMN JSON"})
+        self.assertEqual(mock_generate.call_args.kwargs["model"], "gpt-5-mini")
 
     @patch("app.services.llm_service.genai")
     def test_generate_gemini_success(self, mock_genai):

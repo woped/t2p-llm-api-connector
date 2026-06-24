@@ -210,7 +210,9 @@ def models():
     start_time = time.time()
     status = "200"
     try:
-        return jsonify({"models": model_registry.list_models()}), 200
+        provider = request.args.get("provider") or None
+        model_registry.refresh_model_cache(provider=provider)
+        return jsonify({"models": model_registry.get_cached_models(provider=provider)}), 200
     except Exception as e:
         status = "500"
         logger.exception("/models failed: %s", e)
