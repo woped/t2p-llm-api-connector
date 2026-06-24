@@ -130,9 +130,24 @@ class LLMService:
 
         partials = {}
 
-        start_obj = run_json_step(
-            "start_event", compose_prompt(pack["01_start_event_prompt.txt"])
-        )
+        try:
+            start_obj = run_json_step(
+                "start_event", compose_prompt(pack["01_start_event_prompt.txt"])
+            )
+        except ValueError as start_error:
+            logger.warning(
+                "few-shot start_event step failed (%s); falling back to default start event",
+                start_error,
+            )
+            start_obj = {
+                "events": [
+                    {
+                        "id": "startEvent1",
+                        "type": "startEvent",
+                        "name": "Start",
+                    }
+                ]
+            }
         partials["start"] = start_obj
 
         try:
@@ -159,7 +174,24 @@ class LLMService:
             gateways_obj = {"gateways": []}
         partials["gateways"] = gateways_obj
 
-        end_obj = run_json_step("end_event", compose_prompt(pack["05_end_event_prompt.txt"]))
+        try:
+            end_obj = run_json_step(
+                "end_event", compose_prompt(pack["05_end_event_prompt.txt"])
+            )
+        except ValueError as end_error:
+            logger.warning(
+                "few-shot end_event step failed (%s); falling back to default end event",
+                end_error,
+            )
+            end_obj = {
+                "events": [
+                    {
+                        "id": "endEvent1",
+                        "type": "endEvent",
+                        "name": "End",
+                    }
+                ]
+            }
         partials["end"] = end_obj
 
         known_elements = self._merge_known_elements(
