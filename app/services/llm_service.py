@@ -3,6 +3,7 @@ import time
 import json
 from openai import OpenAI
 import google.generativeai as genai
+from flask import current_app
 from app.utils.prompt_builder import PromptBuilder
 from app.services import model_registry
 from app.services.model_validator import ModelValidator
@@ -17,6 +18,13 @@ class LLMService:
     def __init__(self):
         self.prompt_builder = PromptBuilder()
         self.model_validator = ModelValidator()
+
+    @staticmethod
+    def _config_value(name, default=None):
+        try:
+            return current_app.config.get(name, default)
+        except RuntimeError:
+            return default
 
     @staticmethod
     def _extract_json_object(text):
@@ -327,7 +335,13 @@ class LLMService:
             len(user_text or ""),
             len(prompt or ""),
         )
-        client = OpenAI(api_key=api_key)
+
+        openai_base_url = self._config_value("OPENAI_BASE_URL")
+        client_kwargs = {"api_key": api_key}
+        if openai_base_url:
+            client_kwargs["base_url"] = openai_base_url
+            logger.info("Using configured OpenAI base URL")
+        client = OpenAI(**client_kwargs)
 
         try:
             if prompting_strategy == "few_shot":
@@ -381,7 +395,12 @@ class LLMService:
             len(prompt or ""),
         )
 
-        genai.configure(api_key=api_key)
+        gemini_api_endpoint = self._config_value("GEMINI_API_ENDPOINT")
+        genai_kwargs = {"api_key": api_key}
+        if gemini_api_endpoint:
+            genai_kwargs["client_options"] = {"api_endpoint": gemini_api_endpoint}
+            logger.info("Using configured Gemini API endpoint")
+        genai.configure(**genai_kwargs)
 
         gen_model = genai.GenerativeModel(
             model_name=model, system_instruction=system_prompt

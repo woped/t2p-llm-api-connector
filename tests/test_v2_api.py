@@ -50,6 +50,117 @@ class TestV2Api(unittest.TestCase):
         mock_refresh_model_cache.assert_called_once_with(provider=None)
         mock_get_cached_models.assert_called_once_with(provider=None)
 
+    # --- /health/providers -----------------------------------------------
+    @patch("app.api.routes.model_registry.provider_connectivity")
+    def test_provider_health_all_reachable_is_200(self, mock_provider_connectivity):
+        mock_provider_connectivity.return_value = [
+            {
+                "provider": "openai",
+                "url": "https://api.openai.com/v1/models",
+                "reachable": True,
+                "http_status": 401,
+                "error": None,
+            },
+            {
+                "provider": "gemini",
+                "url": "https://generativelanguage.googleapis.com/v1beta/models",
+                "reachable": True,
+                "http_status": 403,
+                "error": None,
+            },
+        ]
+
+        response = self.client.get("/health/providers")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["all_reachable"])
+        self.assertEqual(len(payload["providers"]), 2)
+        mock_provider_connectivity.assert_called_once_with(provider=None, timeout_seconds=5)
+
+    @patch("app.api.routes.model_registry.provider_connectivity")
+    def test_provider_health_unreachable_is_503(self, mock_provider_connectivity):
+        mock_provider_connectivity.return_value = [
+            {
+                "provider": "openai",
+                "url": "https://api.openai.com/v1/models",
+                "reachable": True,
+                "http_status": 401,
+                "error": None,
+            },
+            {
+                "provider": "gemini",
+                "url": "https://generativelanguage.googleapis.com/v1beta/models",
+                "reachable": False,
+                "http_status": None,
+                "error": "timed out",
+            },
+        ]
+
+        response = self.client.get("/health/providers")
+        self.assertEqual(response.status_code, 503)
+        payload = response.get_json()
+        self.assertFalse(payload["all_reachable"])
+
+    @patch("app.api.routes.model_registry.provider_connectivity")
+    def test_provider_health_invalid_provider_is_400(self, mock_provider_connectivity):
+        mock_provider_connectivity.side_effect = ValueError("Unsupported provider: bogus")
+
+        response = self.client.get("/health/providers?provider=bogus")
+        self.assertEqual(response.status_code, 400)
+        body = response.get_json()
+        self.assertEqual(body["error"]["code"], "invalid_request")
+
+    # --- /health/ready ---------------------------------------------------
+    @patch("app.api.routes.model_registry.provider_connectivity")
+    def test_readiness_health_all_reachable_is_200(self, mock_provider_connectivity):
+        mock_provider_connectivity.return_value = [
+            {
+                "provider": "openai",
+                "url": "https://api.openai.com/v1/models",
+                "reachable": True,
+                "http_status": 401,
+                "error": None,
+            },
+            {
+                "provider": "gemini",
+                "url": "https://generativelanguage.googleapis.com/v1beta/models",
+                "reachable": True,
+                "http_status": 403,
+                "error": None,
+            },
+        ]
+
+        response = self.client.get("/health/ready")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["ready"])
+        self.assertEqual(sorted(payload["checked_providers"]), ["gemini", "openai"])
+        mock_provider_connectivity.assert_called_once_with(provider=None, timeout_seconds=3)
+
+    @patch("app.api.routes.model_registry.provider_connectivity")
+    def test_readiness_health_unreachable_is_503(self, mock_provider_connectivity):
+        mock_provider_connectivity.return_value = [
+            {
+                "provider": "openai",
+                "url": "https://api.openai.com/v1/models",
+                "reachable": True,
+                "http_status": 401,
+                "error": None,
+            },
+            {
+                "provider": "gemini",
+                "url": "https://generativelanguage.googleapis.com/v1beta/models",
+                "reachable": False,
+                "http_status": None,
+                "error": "timed out",
+            },
+        ]
+
+        response = self.client.get("/health/ready")
+        self.assertEqual(response.status_code, 503)
+        payload = response.get_json()
+        self.assertFalse(payload["ready"])
+
     # --- /generate success ------------------------------------------------
     @patch("app.services.llm_service.OpenAI")
     def test_generate_openai_success(self, mock_openai):

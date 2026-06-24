@@ -12,6 +12,8 @@ list and the accepted list can never drift apart.
 
 import logging
 import os
+import urllib.error
+import urllib.request
 
 import google.generativeai as genai
 from openai import OpenAI
@@ -48,14 +50,28 @@ def _provider_env_api_key(provider):
     return None
 
 
-def _discover_openai_models(api_key):
-    client = OpenAI(api_key=api_key)
+def _provider_env_host(provider):
+    if provider == "openai":
+        return os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_HOST")
+    if provider == "gemini":
+        return os.getenv("GEMINI_API_ENDPOINT") or os.getenv("GEMINI_HOST")
+    return None
+
+
+def _discover_openai_models(api_key, base_url=None):
+    kwargs = {"api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
+    client = OpenAI(**kwargs)
     models = client.models.list()
     return sorted({item.id for item in models.data if getattr(item, "id", None)})
 
 
-def _discover_gemini_models(api_key):
-    genai.configure(api_key=api_key)
+def _discover_gemini_models(api_key, api_endpoint=None):
+    kwargs = {"api_key": api_key}
+    if api_endpoint:
+        kwargs["client_options"] = {"api_endpoint": api_endpoint}
+    genai.configure(**kwargs)
     discovered = []
     for item in genai.list_models():
         methods = getattr(item, "supported_generation_methods", []) or []
@@ -72,14 +88,18 @@ def discover_models(provider, api_key=None):
         return []
 
     resolved_api_key = api_key or _provider_env_api_key(provider)
+    resolved_host = _provider_env_host(provider)
     if not resolved_api_key:
         return list(_FALLBACK_MODELS.get(provider, []))
 
     try:
         if provider == "openai":
-            return _discover_openai_models(resolved_api_key)
+            return _discover_openai_models(resolved_api_key, base_url=resolved_host)
         if provider == "gemini":
-            return _discover_gemini_models(resolved_api_key)
+            return _discover_gemini_models(
+                resolved_api_key,
+                api_endpoint=resolved_host,
+            )
     except Exception as exc:
         logger.warning("Model discovery failed for provider %s: %s", provider, exc)
 
@@ -131,3 +151,85 @@ def is_valid(provider, model):
 def dispatch_method(provider):
     """Return the LLMService method name for a provider, or None if unknown."""
     return _DISPATCH.get(provider)
+
+
+def _normalize_openai_probe_url(configured_host):
+    raw = (configured_host or "https://api.openai.com/v1").strip()
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    raw = raw.rstrip("/")
+    if raw.endswith("/models"):
+        return raw
+    return f"{raw}/models"
+
+
+def _normalize_gemini_probe_url(configured_host):
+    raw = (configured_host or "generativelanguage.googleapis.com").strip()
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    raw = raw.rstrip("/")
+    if raw.endswith("/v1beta/models"):
+        return raw
+    if raw.endswith("/v1beta"):
+        return f"{raw}/models"
+    if raw.endswith("/models"):
+        return raw
+    return f"{raw}/v1beta/models"
+
+
+def _probe_url(url, timeout_seconds):
+    request = urllib.request.Request(url=url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            return {
+                "reachable": True,
+                "http_status": int(getattr(response, "status", 200)),
+                "error": None,
+            }
+    except urllib.error.HTTPError as exc:
+        return {
+            "reachable": True,
+            "http_status": int(getattr(exc, "code", 0) or 0),
+            "error": None,
+        }
+    except Exception as exc:
+        return {
+            "reachable": False,
+            "http_status": None,
+            "error": str(exc),
+        }
+
+
+def provider_connectivity(provider=None, timeout_seconds=5):
+    """Probe provider hosts without secrets.
+
+    A provider is considered reachable when a TCP/TLS/HTTP response is received,
+    including 401/403 responses from unauthenticated calls.
+    """
+    providers = [provider] if provider else list(_supported_providers())
+    for current_provider in providers:
+        if current_provider not in _supported_providers():
+            raise ValueError(f"Unsupported provider: {current_provider}")
+
+    timeout_seconds = max(1, min(int(timeout_seconds), 30))
+
+    diagnostics = []
+    for current_provider in providers:
+        host = _provider_env_host(current_provider)
+        if current_provider == "openai":
+            url = _normalize_openai_probe_url(host)
+        else:
+            url = _normalize_gemini_probe_url(host)
+
+        probe = _probe_url(url, timeout_seconds=timeout_seconds)
+        diagnostics.append(
+            {
+                "provider": current_provider,
+                "url": url,
+                "reachable": probe["reachable"],
+                "http_status": probe["http_status"],
+                "error": probe["error"],
+            }
+        )
+
+    return diagnostics

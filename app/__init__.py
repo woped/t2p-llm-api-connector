@@ -6,13 +6,35 @@ from flasgger import Swagger
 import yaml
 from app.services import model_registry
 
-# Logging konfigurieren
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _ensure_stdout_logging(level=logging.INFO):
+    """Ensure process log handlers emit to stdout.
+
+    This keeps logs visible in container aggregators that capture stdout.
+    """
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+
+    has_stdout_handler = False
+    for handler in root_logger.handlers:
+        if isinstance(handler, logging.StreamHandler):
+            handler.setStream(sys.stdout)
+            has_stdout_handler = True
+
+    if not has_stdout_handler:
+        stdout_handler = logging.StreamHandler(stream=sys.stdout)
+        stdout_handler.setLevel(level)
+        stdout_handler.setFormatter(
+            logging.Formatter("%(levelname)s:%(name)s:%(message)s")
+        )
+        root_logger.addHandler(stdout_handler)
 
 
 def create_app(config_class=None):
     """Application factory pattern"""
+    _ensure_stdout_logging(level=logging.INFO)
     app = Flask(__name__)
 
     # Load configuration

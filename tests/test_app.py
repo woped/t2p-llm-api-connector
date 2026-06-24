@@ -2,6 +2,7 @@ import unittest
 from app import create_app
 from config import TestingConfig
 import logging
+import sys
 
 
 class Test_App(unittest.TestCase):
@@ -44,5 +45,5 @@ class Test_App(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
     unittest.main()

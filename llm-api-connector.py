@@ -1,6 +1,10 @@
 import logging
+import sys
 from app import create_app
 from pythonjsonlogger import jsonlogger
+
+
+logger = logging.getLogger(__name__)
 
 
 class MetricsFilter(logging.Filter):
@@ -19,15 +23,16 @@ class MetricsFilter(logging.Filter):
 
 def setup_logging():
     """Setup logging configuration"""
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
 
     werkzeug_logger = logging.getLogger("werkzeug")
     werkzeug_logger.setLevel(logging.INFO)
 
     metrics_filter = MetricsFilter()
 
-    console_handler = logging.StreamHandler()
+    # Ensure all runtime logs are emitted to stdout for container log collection.
+    console_handler = logging.StreamHandler(stream=sys.stdout)
     console_handler.addFilter(metrics_filter)
 
     console_formatter = jsonlogger.JsonFormatter(
@@ -35,8 +40,11 @@ def setup_logging():
     )
     console_handler.setFormatter(console_formatter)
 
-    logger.addHandler(console_handler)
+    root_logger.handlers.clear()
+    werkzeug_logger.handlers.clear()
+    root_logger.addHandler(console_handler)
     werkzeug_logger.addHandler(console_handler)
+    logger.info("Logging configured to stdout")
 
 
 setup_logging()

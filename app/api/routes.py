@@ -6,8 +6,6 @@ from flask import request, jsonify, current_app
 from flasgger import swag_from
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
-# Logging konfigurieren
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Prometheus Metriken
@@ -250,6 +248,126 @@ def echo():
     logger.debug("Health check hit: /_/_/echo")
     REQUEST_COUNT.labels(method="GET", endpoint="/_/_/echo", status="200").inc()
     return jsonify(success=True)
+
+
+@bp.route("/health/providers", methods=["GET"])
+@swag_from(
+    {
+        "tags": ["operations"],
+        "summary": "Provider reachability",
+        "description": (
+            "Checks OpenAI/Gemini host reachability without provider secrets. "
+            "HTTP auth errors (for example 401) still count as reachable."
+        ),
+        "parameters": [
+            {
+                "name": "provider",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "string", "enum": ["openai", "gemini"]},
+            },
+            {
+                "name": "timeout",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "integer", "minimum": 1, "maximum": 30},
+                "description": "Probe timeout in seconds (default 5).",
+            },
+        ],
+        "responses": {
+            "200": {"description": "All requested providers reachable"},
+            "400": {"description": "Invalid query parameter"},
+            "503": {"description": "One or more providers unreachable"},
+        },
+    }
+)
+def provider_health():
+    """Return non-secret connectivity diagnostics for provider hosts."""
+    start_time = time.time()
+    status = "200"
+    try:
+        provider = request.args.get("provider") or None
+        timeout_raw = request.args.get("timeout") or "5"
+
+        try:
+            timeout_seconds = int(timeout_raw)
+        except ValueError:
+            status = "400"
+            return _v2_error(400, "invalid_request", "timeout must be an integer.")
+
+        try:
+            diagnostics = model_registry.provider_connectivity(
+                provider=provider,
+                timeout_seconds=timeout_seconds,
+            )
+        except ValueError as exc:
+            status = "400"
+            return _v2_error(400, "invalid_request", str(exc))
+
+        all_reachable = all(item.get("reachable") for item in diagnostics)
+        response = {
+            "all_reachable": all_reachable,
+            "providers": diagnostics,
+        }
+
+        if all_reachable:
+            return jsonify(response), 200
+
+        status = "503"
+        return jsonify(response), 503
+    except Exception as exc:
+        status = "500"
+        logger.exception("/health/providers failed: %s", exc)
+        return _v2_error(500, "internal_error", "Provider health check failed.")
+    finally:
+        REQUEST_COUNT.labels(method="GET", endpoint="/health/providers", status=status).inc()
+        REQUEST_LATENCY.labels(method="GET", endpoint="/health/providers").observe(
+            time.time() - start_time
+        )
+
+
+@bp.route("/health/ready", methods=["GET"])
+@swag_from(
+    {
+        "tags": ["operations"],
+        "summary": "Readiness probe",
+        "description": (
+            "Compact readiness check based on provider host connectivity. "
+            "Returns 200 when all providers are reachable, otherwise 503."
+        ),
+        "responses": {
+            "200": {"description": "Service is ready"},
+            "503": {"description": "Service is not ready"},
+        },
+    }
+)
+def readiness_health():
+    """Readiness probe suitable for orchestrators/load balancers."""
+    start_time = time.time()
+    status = "200"
+    try:
+        diagnostics = model_registry.provider_connectivity(provider=None, timeout_seconds=3)
+        all_reachable = all(item.get("reachable") for item in diagnostics)
+
+        response = {
+            "ready": all_reachable,
+            "checked_providers": [item.get("provider") for item in diagnostics],
+        }
+
+        if all_reachable:
+            return jsonify(response), 200
+
+        status = "503"
+        return jsonify(response), 503
+    except Exception as exc:
+        status = "503"
+        logger.exception("/health/ready failed: %s", exc)
+        return jsonify({"ready": False, "checked_providers": []}), 503
+    finally:
+        REQUEST_COUNT.labels(method="GET", endpoint="/health/ready", status=status).inc()
+        REQUEST_LATENCY.labels(method="GET", endpoint="/health/ready").observe(
+            time.time() - start_time
+        )
 
 
 @bp.route("/metrics")

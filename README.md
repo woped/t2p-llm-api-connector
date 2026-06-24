@@ -70,6 +70,26 @@ providers. If you pass `Authorization: Bearer <api_key>`, the connector can use 
 discovery; otherwise it uses configured environment keys when available. See `/openapi.json`
 or the Swagger UI at `/docs/` for the full API contract.
 
+## Provider Host Configuration
+
+By default, providers are called via their public endpoints. For production gateways,
+reverse proxies, or internal egress setups, you can override provider hosts via environment
+variables:
+
+- `OPENAI_BASE_URL` (alias: `OPENAI_HOST`)
+- `GEMINI_API_ENDPOINT` (alias: `GEMINI_HOST`)
+
+Example:
+
+```bash
+docker run -p 5000:5000 \
+  -e OPENAI_BASE_URL=https://api.openai.com/v1 \
+  -e GEMINI_API_ENDPOINT=generativelanguage.googleapis.com \
+  -e OPENAI_API_KEY=... \
+  -e GEMINI_API_KEY=... \
+  llm-api-connector
+```
+
 ## Running the Application with Docker
 
 To build the docker image, navigate to the root directory of the project and run the following command:

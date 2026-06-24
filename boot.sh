@@ -1,5 +1,5 @@
 #!/bin/sh
-source venv/bin/activate
+. venv/bin/activate
 
 # Schemamigration of flask
 # while true; do
@@ -11,4 +11,4 @@ source venv/bin/activate
 #     sleep 5
 # done
 
-exec gunicorn -b :5000 --access-logfile - --error-logfile - llm-api-connector:app
+exec venv/bin/gunicorn -b :5000 --access-logfile - --error-logfile - llm-api-connector:app
