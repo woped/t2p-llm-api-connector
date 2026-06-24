@@ -1,0 +1,37 @@
+Task: Merge partial outputs from previous calls into one BPMN JSON object and validate constraints.
+
+Input:
+{{PARTIAL_OUTPUTS_JSON}}
+
+Output schema:
+{
+  "events": [...],
+  "tasks": [...],
+  "gateways": [...],
+  "flows": [...]
+}
+
+Validation checklist:
+- Exactly one startEvent and one endEvent.
+- All element types are valid and case-correct.
+- All flows are sequenceFlow and have unique IDs.
+- Every non-event node has incoming and outgoing flow where possible.
+- Source/target references exist.
+- Parallel/exclusive split and join structure is coherent.
+- Flow order is consistent with narrative progression inferred from extracted element
+  array order and explicit branch/loop cues.
+- No accidental cross-branch wiring (for example, branch-internal tasks connected to
+  unrelated branch tasks without a join).
+- A complete path exists from startEvent1 to endEvent1.
+
+Few-shot merge pattern:
+- Keep IDs as provided by earlier calls.
+- Remove duplicates by ID.
+- Preserve only schema fields required in final output.
+- Return JSON only.
+- If partial outputs disagree on order, resolve conflicts with this priority:
+  1) explicit textual control-flow cues,
+  2) gateway split/join semantics,
+  3) canonical extraction order from earlier calls.
+- If needed, repair only the minimum set of sequenceFlow edges to restore correct
+  ordering while preserving existing IDs for unchanged elements.

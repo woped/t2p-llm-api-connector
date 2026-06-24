@@ -35,7 +35,8 @@ flask run
 ```
 
 The application will be accessible at http://localhost:5000.  
-The interactive API documentation (Swagger UI) is available at http://localhost:5000/docs.
+The interactive API documentation (Swagger UI) is available at http://localhost:5000/docs/.
+The generated OpenAPI specification is available at http://localhost:5000/openapi.json.
 
 > **Note:** `FLASK_ENV` is still used by this project's `config.py` to select the active configuration class (`development` / `production` / `testing`). It is separate from Flask's own debug flag and is already pre-configured in `.flaskenv` for local development — no manual export is needed.
 
@@ -52,23 +53,22 @@ Example request body for `POST /generate`:
 {
   "user_text": "A customer submits an order. A clerk checks the inventory ...",
   "provider": "openai",
-  "model": "gpt-5.4-mini",
+  "model": "gpt-4o",
   "prompting_strategy": "few_shot"
 }
 ```
 
-### Supported models
+For supported providers, the connector accepts any submitted model name and forwards it to
+the provider. Newly released provider models therefore do not require a code change in the
+connector.
 
-| Provider | Model | Notes |
-|----------|-------|-------|
-| `openai` | `gpt-5.5` | Newest general-purpose standard model |
-| `openai` | `gpt-5.4-mini` | Cost-effective, recommended default |
-| `openai` | `gpt-5.4-nano` | Cheapest, high-volume / low-latency |
-| `openai` | `gpt-4o` | Legacy — kept for backward compatibility |
-| `gemini` | `gemini-3.5-flash` | Newest flash tier, best price/performance |
-| `gemini` | `gemini-3.1-flash-lite` | Cheapest, high-volume / low-latency |
+`prompting_strategy` is optional. Supported values are `zero_shot` and `few_shot`.
+If omitted, `zero_shot` is used by default.
 
-Use `GET /models` to retrieve the current list at runtime. See `docs/openapi.yaml` or the Swagger UI at `/docs` for the full API contract.
+Use `GET /models` to retrieve the list of provider/model pairs discovered from the backing
+providers. If you pass `Authorization: Bearer <api_key>`, the connector can use that key for
+discovery; otherwise it uses configured environment keys when available. See `/openapi.json`
+or the Swagger UI at `/docs/` for the full API contract.
 
 ## Running the Application with Docker
 
@@ -88,13 +88,8 @@ The application will be accessible at http://localhost:5000.
 Run the following commands from the **project root** (not the `tests` folder — the test suite needs to resolve the `app` package):
 
 ```bash
-coverage run -m pytest
+coverage run -m unittest discover -s tests
 ```
-> The suite runs under **pytest** (not `unittest discover`): several modules are
-> plain pytest functions — the validators and the few-shot guard — which
-> `unittest discover` silently skips. `flask test` uses pytest for the same
-> reason.
-
 You can then view the coverage report by running:
 ```bash
 coverage report

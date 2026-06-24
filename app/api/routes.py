@@ -1,15 +1,14 @@
-import json
 import logging
 import time
 from app.api import bp
-from app.services.llm_service import LLMService, ProviderError
+from app.services.llm_service import LLMService
 from app.services import model_registry
-from app.validation import validate_model, ValidationError
 from flask import request, jsonify, current_app
+from flasgger import swag_from
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
-# Logging is configured centrally in the entrypoint (see app/__init__.py);
-# modules only obtain a logger here.
+# Logging konfigurieren
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Prometheus Metriken
@@ -25,63 +24,7 @@ REQUEST_LATENCY = Histogram(
 # (the per-call provider clients are still created inside each call_* method,
 # keeping per-request API keys isolated).
 _llm_service = LLMService()
-
-# A failed validation re-runs the whole LLM generation. Total attempts include
-# the first try, so this is one initial call plus two retries.
-_MAX_GENERATION_ATTEMPTS = 3
-
-# Temperature used when regenerating after a validation failure. The first
-# attempt runs deterministically (temperature 0); without a bump the identical
-# prompt would yield the identical invalid output, wasting the retries. Kept
-# small so the output still tracks the prompt closely. (Reasoning models that
-# reject temperature are unaffected — the provider call drops it for them.)
-_RETRY_TEMPERATURE = 0.3
-
-
-def _generate_validated(**generate_kwargs):
-    """Generate a process model, regenerating until it passes validation.
-
-    Calls the LLM up to ``_MAX_GENERATION_ATTEMPTS`` times; the first response
-    that passes validation is returned unchanged. A response that fails a
-    validator triggers a fresh generation. Returns ``None`` if every attempt
-    fails, so the caller can return a single generic error.
-
-    Validation runs on the parsed model; a response that is not JSON is returned
-    as-is (JSON-ness is the downstream contract's concern, and will be covered by
-    enforced structured output).
-
-    Raises ``ValidationError`` carrying the last attempt's problems if every
-    attempt fails, so the caller can surface a meaningful reason instead of a
-    generic error.
-    """
-    feedback = None
-    previous_model = None
-    for attempt in range(1, _MAX_GENERATION_ATTEMPTS + 1):
-        # Deterministic first attempt; regenerations use a small non-zero
-        # temperature so a rejected output is not reproduced verbatim, and carry
-        # the previous attempt's validation problems plus the rejected model so
-        # the model applies the fixes to that exact model instead of diverging.
-        generate_kwargs["temperature"] = 0.0 if attempt == 1 else _RETRY_TEMPERATURE
-        raw_response = _llm_service.generate(
-            **generate_kwargs, feedback=feedback, previous_model=previous_model
-        )
-        try:
-            model = json.loads(raw_response)
-        except (json.JSONDecodeError, TypeError):
-            return raw_response
-        try:
-            validate_model(model)
-            return raw_response
-        except ValidationError as e:
-            feedback = str(e)
-            previous_model = raw_response
-            logger.info(
-                "Generation attempt %d/%d failed validation; retrying. Issues: %s",
-                attempt,
-                _MAX_GENERATION_ATTEMPTS,
-                feedback,
-            )
-    raise ValidationError(feedback)
+_SUPPORTED_PROMPTING_STRATEGIES = {"zero_shot", "few_shot"}
 
 
 # --- v2 contract API (consumed by t2p-2.0) --------------------------------
@@ -111,6 +54,51 @@ def _extract_bearer_key():
 
 
 @bp.route("/generate", methods=["POST"])
+@swag_from(
+    {
+        "tags": ["v2-contract"],
+        "summary": "Generate process model",
+        "description": "Generate a structured BPMN JSON model from process text.",
+        "security": [{"bearerAuth": []}],
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["user_text", "provider", "model"],
+                        "properties": {
+                            "user_text": {"type": "string"},
+                            "provider": {"type": "string"},
+                            "model": {"type": "string"},
+                            "prompting_strategy": {
+                                "type": "string",
+                                "enum": ["zero_shot", "few_shot"],
+                                "default": "zero_shot",
+                            },
+                        },
+                    }
+                }
+            },
+        },
+        "responses": {
+            "200": {
+                "description": "Successful provider response",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {"raw_response": {"type": "string"}},
+                        }
+                    }
+                },
+            },
+            "400": {"description": "Invalid request or provider/model"},
+            "401": {"description": "Missing or malformed Authorization header"},
+            "500": {"description": "Upstream provider failure"},
+        },
+    }
+)
 def generate():
     """Generate a structured BPMN-JSON process model from a description.
 
@@ -144,6 +132,7 @@ def generate():
 
         provider = data["provider"]
         model = data["model"]
+        prompting_strategy = data.get("prompting_strategy", "zero_shot")
         if not model_registry.is_valid(provider, model):
             status = "400"
             return _v2_error(
@@ -151,42 +140,32 @@ def generate():
                 "invalid_provider",
                 f"Unknown provider/model: {provider}/{model}.",
             )
+        if prompting_strategy not in _SUPPORTED_PROMPTING_STRATEGIES:
+            status = "400"
+            allowed = ", ".join(sorted(_SUPPORTED_PROMPTING_STRATEGIES))
+            return _v2_error(
+                400,
+                "invalid_request",
+                f"Invalid prompting_strategy '{prompting_strategy}'. Allowed values: {allowed}.",
+            )
 
         logger.info(
             "Invoking LLMService.generate (provider=%s, model=%s)", provider, model
         )
-        try:
-            raw_response = _generate_validated(
-                api_key=api_key,
-                provider=provider,
-                model=model,
-                user_text=data["user_text"],
-                system_prompt=current_app.config["SYSTEM_PROMPT"],
-                prompting_strategy=data.get("prompting_strategy", "few_shot"),
-            )
-        except ValidationError as e:
-            status = "502"
-            return _v2_error(
-                502,
-                "upstream_error",
-                f"Could not generate a valid model after {_MAX_GENERATION_ATTEMPTS} "
-                f"attempts. Last validation problems: {e}",
-            )
+        raw_response = _llm_service.generate(
+            api_key=api_key,
+            provider=provider,
+            model=model,
+            user_text=data["user_text"],
+            system_prompt=current_app.config["SYSTEM_PROMPT"],
+            prompting_strategy=prompting_strategy,
+        )
         return jsonify({"raw_response": raw_response}), 200
 
-    except ProviderError as e:
-        # The upstream provider (OpenAI / Google) rejected or failed the call.
-        # Forward its real error text and mirror the upstream status so the
-        # calling service can debug and react (429 is retryable; otherwise it is
-        # a bad-gateway condition). The traceback is already logged in the
-        # service layer.
-        http_status = 429 if e.upstream_status == 429 else 502
-        status = str(http_status)
-        return _v2_error(http_status, "upstream_error", str(e))
     except Exception as e:
         status = "500"
         logger.exception("/generate failed: %s", e)
-        return _v2_error(500, "internal_error", "An unexpected error occurred.")
+        return _v2_error(500, "upstream_error", "The LLM provider call failed.")
     finally:
         REQUEST_COUNT.labels(method="POST", endpoint="/generate", status=status).inc()
         REQUEST_LATENCY.labels(method="POST", endpoint="/generate").observe(
@@ -195,12 +174,48 @@ def generate():
 
 
 @bp.route("/models", methods=["GET"])
+@swag_from(
+    {
+        "tags": ["v2-contract"],
+        "summary": "List models",
+        "description": "Return supported provider/model pairs.",
+        "responses": {
+            "200": {
+                "description": "Models listed",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "models": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "provider": {"type": "string"},
+                                            "model": {"type": "string"},
+                                        },
+                                    },
+                                }
+                            },
+                        }
+                    }
+                },
+            },
+            "500": {"description": "Internal error"},
+        },
+    }
+)
 def models():
     """Return the advertised provider/model pairs from the registry."""
     start_time = time.time()
     status = "200"
     try:
-        return jsonify({"models": model_registry.list_models()}), 200
+        provider = request.args.get("provider") or None
+        model_registry.refresh_model_cache(provider=provider)
+        return jsonify(
+            {"models": model_registry.get_cached_models(provider=provider)}
+        ), 200
     except Exception as e:
         status = "500"
         logger.exception("/models failed: %s", e)
@@ -213,6 +228,26 @@ def models():
 
 
 @bp.route("/_/_/echo")
+@swag_from(
+    {
+        "tags": ["operations"],
+        "summary": "Health check",
+        "description": "Operational liveness endpoint.",
+        "responses": {
+            "200": {
+                "description": "Service is reachable",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {"success": {"type": "boolean"}},
+                        }
+                    }
+                },
+            }
+        },
+    }
+)
 def echo():
     """Health check endpoint"""
     logger.debug("Health check hit: /_/_/echo")
