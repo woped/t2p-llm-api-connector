@@ -43,7 +43,7 @@ class LLMService:
         end = content.rfind("}")
         if start == -1 or end == -1 or end <= start:
             raise ValueError("Model output does not contain a JSON object.")
-        return json.loads(content[start : end + 1])
+        return json.loads(content[start:end + 1])
 
     @staticmethod
     def _merge_known_elements(partials):

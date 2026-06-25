@@ -34,7 +34,7 @@ class TestT2PService(unittest.TestCase):
         if strategy == "few_shot":
             mock_response = f"""
             Start Event: Customer initiates process with {sentence.split()[0] if sentence.split() else "request"}
-            
+
             Tasks/Activities:
             """
         else:
@@ -80,12 +80,18 @@ class TestT2PService(unittest.TestCase):
                 print(f"[OpenAI | {strategy}] AI Response:\n{result}\n")
 
     def test_linear_process(self):
-        sentence = "The customer fills out the form, then a clerk checks the information, and finally the application is approved."
+        sentence = (
+            "The customer fills out the form, then a clerk checks the information, "
+            "and finally the application is approved."
+        )
         expected_keywords = ["form", "check", "approve"]
         self.run_test_case(sentence, expected_keywords)
 
     def test_conditional_process(self):
-        sentence = "If the customer has a valid license, the product is activated. Otherwise, an error message is displayed."
+        sentence = (
+            "If the customer has a valid license, the product is activated. "
+            "Otherwise, an error message is displayed."
+        )
         expected_keywords = ["license", "product", "error"]
         self.run_test_case(sentence, expected_keywords)
 

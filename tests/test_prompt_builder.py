@@ -16,6 +16,7 @@ class TestPromptBuilder(unittest.TestCase):
         prompt = PromptBuilder().build_prompt("zero_shot", "ship the order")
         self.assertIn("ship the order", prompt)
         self.assertIn("Please generate a BPMN model", prompt)
+        self.assertIn(STRICT_JSON_REMINDER, prompt)
 
     def test_few_shot_embeds_user_input(self):
         prompt = PromptBuilder().build_prompt("few_shot", "ship the order")

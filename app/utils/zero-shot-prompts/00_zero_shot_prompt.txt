@@ -2,4 +2,15 @@ Please generate a BPMN model for the following description:
 
 {{PROCESS_TEXT}}
 
-BPMN:
+STRICT JSON REMINDER: return exactly one valid JSON object only. 
+Do not use markdown fences, code blocks, explanations, or extra text.
+
+Return only a JSON object with the following structure:
+{
+  "events": [...],
+  "tasks": [...],
+  "gateways": [...],
+  "flows": [...]
+}
+
+BPMN JSON:

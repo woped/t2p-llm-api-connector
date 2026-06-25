@@ -126,13 +126,17 @@ class ModelValidator:
                 )
 
             if isinstance(branch_count, int) and branch_count >= 2:
-                if role == "split" and outgoing.get(gateway_id, 0) != branch_count:
+                outgoing_count = outgoing.get(gateway_id, 0)
+                incoming_count = incoming.get(gateway_id, 0)
+                if role == "split" and outgoing_count != branch_count:
                     issues.append(
-                        f"Gateway {gateway_id} split branch_count={branch_count} but outgoing flow count is {outgoing.get(gateway_id, 0)}."
+                        f"Gateway {gateway_id} split branch_count={branch_count} "
+                        f"but outgoing flow count is {outgoing_count}."
                     )
-                if role == "join" and incoming.get(gateway_id, 0) != branch_count:
+                if role == "join" and incoming_count != branch_count:
                     issues.append(
-                        f"Gateway {gateway_id} join branch_count={branch_count} but incoming flow count is {incoming.get(gateway_id, 0)}."
+                        f"Gateway {gateway_id} join branch_count={branch_count} "
+                        f"but incoming flow count is {incoming_count}."
                     )
 
             if paired_gateway_id and paired_gateway_id not in node_id_set:
@@ -142,9 +146,11 @@ class ModelValidator:
 
             branch_cues = gateway.get("branch_cues")
             if role == "split" and isinstance(branch_cues, list) and len(branch_cues) >= 2:
-                if outgoing.get(gateway_id, 0) < len(branch_cues):
+                outgoing_count = outgoing.get(gateway_id, 0)
+                if outgoing_count < len(branch_cues):
                     issues.append(
-                        f"Gateway {gateway_id} declares {len(branch_cues)} branch cues but has only {outgoing.get(gateway_id, 0)} outgoing flows."
+                        f"Gateway {gateway_id} declares {len(branch_cues)} branch cues "
+                        f"but has only {outgoing_count} outgoing flows."
                     )
 
         text = (source_text or "").lower()

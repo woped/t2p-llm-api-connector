@@ -59,7 +59,11 @@ class PromptBuilder:
             return self.zero_shot_prompt_template.replace("{{PROCESS_TEXT}}", user_input)
         return (
             "Please generate a BPMN model for the following description:\n\n"
-            f"{user_input}\n\nBPMN:"
+            f"{user_input}\n\n"
+            f"{STRICT_JSON_REMINDER}\n\n"
+            "Return only a JSON object with the following structure:\n"
+            '{"events": [], "tasks": [], "gateways": [], "flows": []}\n\n'
+            "BPMN JSON:"
         )
 
     def _build_stepwise_few_shot_prompt(self, user_input):
