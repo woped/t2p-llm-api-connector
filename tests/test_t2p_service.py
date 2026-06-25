@@ -4,6 +4,7 @@ import json
 import os
 import config
 from app.services.llm_service import LLMService
+from app.utils.prompt_builder import STRICT_JSON_REMINDER
 from app.services.model_validator import ModelValidator
 
 
@@ -186,6 +187,12 @@ class TestT2PService(unittest.TestCase):
         self.assertGreaterEqual(
             mock_openai.return_value.chat.completions.create.call_count, 6
         )
+        first_call_messages = (
+            mock_openai.return_value.chat.completions.create.call_args_list[0].kwargs[
+                "messages"
+            ]
+        )
+        self.assertIn(STRICT_JSON_REMINDER, first_call_messages[1]["content"])
 
     @patch("app.services.llm_service.OpenAI")
     def test_few_shot_retries_when_step_returns_non_json(self, mock_openai):

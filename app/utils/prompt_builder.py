@@ -3,6 +3,11 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+STRICT_JSON_REMINDER = (
+    "STRICT JSON REMINDER: return exactly one valid JSON object only. "
+    "Do not use markdown fences, code blocks, explanations, or extra text."
+)
+
 
 class PromptBuilder:
     """Class for building prompts with different strategies"""
@@ -115,6 +120,8 @@ class PromptBuilder:
                 "{{PARTIAL_OUTPUTS_JSON}}",
                 "Use your outputs from steps 1-5 as partial outputs.",
             ),
+            "",
+            STRICT_JSON_REMINDER,
             "",
             "PROCESS TEXT:",
             user_input,

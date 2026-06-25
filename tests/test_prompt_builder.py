@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from app.utils.prompt_builder import PromptBuilder
+from app.utils.prompt_builder import PromptBuilder, STRICT_JSON_REMINDER
 
 
 class TestPromptBuilder(unittest.TestCase):
@@ -21,6 +21,7 @@ class TestPromptBuilder(unittest.TestCase):
         prompt = PromptBuilder().build_prompt("few_shot", "ship the order")
         self.assertIn("ship the order", prompt)
         self.assertIn("stepwise few-shot method", prompt.lower())
+        self.assertIn(STRICT_JSON_REMINDER, prompt)
 
     def test_prompt_pack_load_failure_degrades_gracefully(self):
         # If all prompt-pack files are unreadable, the builder must not crash
@@ -33,6 +34,7 @@ class TestPromptBuilder(unittest.TestCase):
         prompt = builder.build_prompt("few_shot", "ship the order")
         self.assertIn("ship the order", prompt)
         self.assertIn("Please generate a BPMN model", prompt)
+        self.assertIn(STRICT_JSON_REMINDER, prompt)
 
     def test_zero_shot_template_load_failure_degrades_gracefully(self):
         with patch("pathlib.Path.read_text", side_effect=OSError("missing file")):

@@ -8,7 +8,7 @@ from openai import OpenAI
 
 from app.services import model_registry
 from app.services.model_validator import ModelValidator
-from app.utils.prompt_builder import PromptBuilder
+from app.utils.prompt_builder import PromptBuilder, STRICT_JSON_REMINDER
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,8 @@ class LLMService:
         model_block = json.dumps(model_json, ensure_ascii=False, indent=2)
         return (
             "You are repairing a BPMN JSON model to satisfy strict structural rules.\n"
-            "Return JSON only. Preserve IDs where possible, but fix broken structure.\n\n"
+            f"{STRICT_JSON_REMINDER}\n\n"
+            "Preserve IDs where possible, but fix broken structure.\n\n"
             "Process text:\n"
             f"{user_text}\n\n"
             "Validation issues to fix:\n"
@@ -110,7 +111,9 @@ class LLMService:
                     json.dumps(partial_outputs or {}, ensure_ascii=False, indent=2),
                 )
             return (
-                f"{shared}\n\n{body}\n\n" "Return only JSON matching the step schema."
+                f"{shared}\n\n{body}\n\n"
+                f"{STRICT_JSON_REMINDER}\n"
+                "Return only JSON matching the step schema."
             ).strip()
 
         def run_json_step(step_name, prompt):
@@ -124,9 +127,8 @@ class LLMService:
                 )
                 retry_prompt = (
                     f"{prompt}\n\n"
-                    "IMPORTANT: Your previous answer was not valid JSON. "
-                    "Respond again with exactly one JSON object matching the requested schema. "
-                    "No markdown fences, no explanations, no extra text."
+                    f"{STRICT_JSON_REMINDER} "
+                    "Respond again with exactly one JSON object matching the requested schema."
                 )
                 retry_response_text = generate_once(retry_prompt)
                 try:
