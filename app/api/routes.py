@@ -53,6 +53,19 @@ def _extract_bearer_key():
     return None
 
 
+def _is_quota_error(exc):
+    """Return True for provider quota/rate-limit style exceptions."""
+    text = str(exc or "").lower()
+    indicators = (
+        "quota",
+        "resourceexhausted",
+        "too many requests",
+        "rate limit",
+        "perday",
+    )
+    return any(token in text for token in indicators)
+
+
 @bp.route("/generate", methods=["POST"])
 @swag_from(
     {
@@ -95,6 +108,7 @@ def _extract_bearer_key():
             },
             "400": {"description": "Invalid request or provider/model"},
             "401": {"description": "Missing or malformed Authorization header"},
+            "429": {"description": "Provider quota or rate limit exceeded"},
             "500": {"description": "Upstream provider failure"},
         },
     }
@@ -175,6 +189,18 @@ def generate():
         return jsonify({"raw_response": raw_response}), 200
 
     except Exception as e:
+        if _is_quota_error(e):
+            status = "429"
+            logger.warning("/generate provider quota exceeded: %s", e)
+            return _v2_error(
+                429,
+                "rate_limited",
+                (
+                    "Provider quota or rate limit exceeded. "
+                    "Try again later or use another model."
+                ),
+            )
+
         status = "500"
         logger.exception("/generate failed: %s", e)
         return _v2_error(500, "upstream_error", "The LLM provider call failed.")

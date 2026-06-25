@@ -260,6 +260,19 @@ class TestV2Api(unittest.TestCase):
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.get_json()["error"]["code"], "upstream_error")
 
+    @patch("app.services.llm_service.OpenAI")
+    def test_generate_openai_quota_error_is_429_rate_limited(self, mock_openai):
+        mock_openai.return_value.chat.completions.create.side_effect = RuntimeError(
+            "Rate limit reached for requests: insufficient_quota"
+        )
+        response = self.client.post(
+            "/generate",
+            headers={"Authorization": "Bearer secret-token"},
+            json={"user_text": "x", "provider": "openai", "model": "gpt-4o"},
+        )
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.get_json()["error"]["code"], "rate_limited")
+
     @patch("app.services.llm_service.genai")
     def test_generate_gemini_provider_error_is_500_upstream(self, mock_genai):
         # The Gemini provider must map a provider-side failure to the same
@@ -279,6 +292,25 @@ class TestV2Api(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.get_json()["error"]["code"], "upstream_error")
+
+    @patch("app.services.llm_service.genai")
+    def test_generate_gemini_quota_error_is_429_rate_limited(self, mock_genai):
+        mock_genai.GenerativeModel.return_value.generate_content.side_effect = RuntimeError(
+            "quota_metric: "
+            "generativelanguage.googleapis.com/"
+            "generate_content_free_tier_requests"
+        )
+        response = self.client.post(
+            "/generate",
+            headers={"Authorization": "Bearer secret-token"},
+            json={
+                "user_text": "x",
+                "provider": "gemini",
+                "model": "gemini-2.0-flash",
+            },
+        )
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.get_json()["error"]["code"], "rate_limited")
 
     # --- /generate malformed body ----------------------------------------
     def test_generate_non_json_body_is_400(self):
