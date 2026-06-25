@@ -34,9 +34,9 @@ A `.flaskenv` file in the project root already sets `FLASK_APP` and the environm
 flask run
 ```
 
-The application will be accessible at http://localhost:5000.  
-The interactive API documentation (Swagger UI) is available at http://localhost:5000/docs/.
-The generated OpenAPI specification is available at http://localhost:5000/openapi.json.
+The application will be accessible at http://localhost:5001.  
+The interactive API documentation (Swagger UI) is available at http://localhost:5001/docs/.
+The generated OpenAPI specification is available at http://localhost:5001/openapi.json.
 
 > **Note:** `FLASK_ENV` is still used by this project's `config.py` to select the active configuration class (`development` / `production` / `testing`). It is separate from Flask's own debug flag and is already pre-configured in `.flaskenv` for local development — no manual export is needed.
 
