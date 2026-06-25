@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 
 import prometheus_client
@@ -7,6 +8,7 @@ from flask import current_app, jsonify, request
 
 from app.api import bp
 from app.services import model_registry
+from app.services.async_jobs import AsyncJobStore
 from app.services.llm_service import EmptyResponseError, LLMService
 
 logger = logging.getLogger(__name__)
@@ -25,6 +27,101 @@ REQUEST_LATENCY = prometheus_client.Histogram(
 # keeping per-request API keys isolated).
 _llm_service = LLMService()
 _SUPPORTED_PROMPTING_STRATEGIES = {"zero_shot", "few_shot"}
+
+
+def _job_store():
+    return AsyncJobStore(
+        redis_url=current_app.config["REDIS_URL"],
+        ttl_seconds=current_app.config.get("ASYNC_JOB_TTL_SECONDS", 3600),
+        use_mock=current_app.config.get("REDIS_USE_MOCK", False),
+    )
+
+
+def _validate_generate_payload(api_key, data):
+    if api_key is None:
+        return _v2_error(401, "unauthorized", "Missing or malformed Authorization header.")
+
+    if not isinstance(data, dict):
+        return _v2_error(400, "invalid_request", "Request body must be JSON.")
+
+    missing = [f for f in ("user_text", "provider", "model") if not data.get(f)]
+    if missing:
+        return _v2_error(
+            400,
+            "invalid_request",
+            f"Missing or empty field(s): {', '.join(missing)}.",
+        )
+
+    if data.get("prompting_strategy", "zero_shot") not in _SUPPORTED_PROMPTING_STRATEGIES:
+        allowed = ", ".join(sorted(_SUPPORTED_PROMPTING_STRATEGIES))
+        return _v2_error(
+            400,
+            "invalid_request",
+            f"Invalid prompting_strategy '{data.get('prompting_strategy')}'. Allowed values: {allowed}.",
+        )
+
+    provider = data["provider"]
+    model = data["model"]
+    try:
+        model_registry.refresh_model_cache(provider=provider, api_key=api_key)
+    except Exception as refresh_err:
+        logger.warning(
+            "Model cache refresh failed for provider %s: %s",
+            provider,
+            refresh_err,
+        )
+
+    if not model_registry.is_valid(provider, model):
+        return _v2_error(
+            400,
+            "invalid_provider",
+            f"Unknown provider/model: {provider}/{model}.",
+        )
+
+    return None
+
+
+def _run_async_generate(app, job_id, api_key, data):
+    with app.app_context():
+        store = _job_store()
+        store.update_status(job_id, "running")
+        try:
+            raw_response = _llm_service.generate(
+                api_key=api_key,
+                provider=data["provider"],
+                model=data["model"],
+                user_text=data["user_text"],
+                system_prompt=current_app.config["SYSTEM_PROMPT"],
+                prompting_strategy=data.get("prompting_strategy", "zero_shot"),
+            )
+            store.update_status(
+                job_id,
+                "succeeded",
+                result={"raw_response": raw_response},
+                error=None,
+            )
+        except EmptyResponseError as e:
+            store.update_status(
+                job_id,
+                "failed",
+                error={
+                    "code": "invalid_request",
+                    "message": "The LLM provider returned an empty response.",
+                    "detail": str(e),
+                },
+            )
+        except Exception as e:
+            error_code = "rate_limited" if _is_quota_error(e) else "upstream_error"
+            error_message = (
+                "Provider quota or rate limit exceeded. Try again later or use another model."
+                if error_code == "rate_limited"
+                else "The LLM provider call failed."
+            )
+            store.update_status(
+                job_id,
+                "failed",
+                error={"code": error_code, "message": error_message, "detail": str(e)},
+            )
 
 
 # --- v2 contract API (consumed by t2p-2.0) --------------------------------
@@ -124,25 +221,11 @@ def generate():
     status = "200"
     try:
         api_key = _extract_bearer_key()
-        if api_key is None:
-            status = "401"
-            return _v2_error(
-                401, "unauthorized", "Missing or malformed Authorization header."
-            )
-
         data = request.get_json(silent=True)
-        if not isinstance(data, dict):
-            status = "400"
-            return _v2_error(400, "invalid_request", "Request body must be JSON.")
-
-        missing = [f for f in ("user_text", "provider", "model") if not data.get(f)]
-        if missing:
-            status = "400"
-            return _v2_error(
-                400,
-                "invalid_request",
-                f"Missing or empty field(s): {', '.join(missing)}.",
-            )
+        validation_error = _validate_generate_payload(api_key, data)
+        if validation_error is not None:
+            status = str(validation_error[1])
+            return validation_error
 
         provider = data["provider"]
         model = data["model"]
@@ -157,22 +240,6 @@ def generate():
                 "Model cache refresh failed for provider %s: %s",
                 provider,
                 refresh_err,
-            )
-
-        if not model_registry.is_valid(provider, model):
-            status = "400"
-            return _v2_error(
-                400,
-                "invalid_provider",
-                f"Unknown provider/model: {provider}/{model}.",
-            )
-        if prompting_strategy not in _SUPPORTED_PROMPTING_STRATEGIES:
-            status = "400"
-            allowed = ", ".join(sorted(_SUPPORTED_PROMPTING_STRATEGIES))
-            return _v2_error(
-                400,
-                "invalid_request",
-                f"Invalid prompting_strategy '{prompting_strategy}'. Allowed values: {allowed}.",
             )
 
         logger.info(
@@ -218,6 +285,65 @@ def generate():
         REQUEST_LATENCY.labels(method="POST", endpoint="/generate").observe(
             time.time() - start_time
         )
+
+
+@bp.route("/internal/jobs/generate", methods=["POST"])
+def internal_generate_submit():
+    """Internal-only async submit endpoint used by t2p orchestration."""
+    if not current_app.config.get("INTERNAL_ASYNC_ENABLED", True):
+        return _v2_error(404, "not_found", "Internal async endpoint is disabled.")
+
+    api_key = _extract_bearer_key()
+    data = request.get_json(silent=True)
+    validation_error = _validate_generate_payload(api_key, data)
+    if validation_error is not None:
+        return validation_error
+
+    store = _job_store()
+    job_id = store.create()
+
+    app_obj = current_app._get_current_object()
+    worker = threading.Thread(
+        target=_run_async_generate,
+        args=(app_obj, job_id, api_key, data),
+        daemon=True,
+    )
+    worker.start()
+
+    return (
+        jsonify(
+            {
+                "job_id": job_id,
+                "status": "queued",
+                "status_url": f"/internal/jobs/{job_id}",
+            }
+        ),
+        202,
+    )
+
+
+@bp.route("/internal/jobs/<job_id>", methods=["GET"])
+def internal_generate_status(job_id):
+    """Internal-only async status endpoint used by t2p orchestration."""
+    if not current_app.config.get("INTERNAL_ASYNC_ENABLED", True):
+        return _v2_error(404, "not_found", "Internal async endpoint is disabled.")
+
+    store = _job_store()
+    payload = store.get(job_id)
+    if payload is None:
+        return _v2_error(404, "not_found", "Unknown or expired job id.")
+
+    response = {
+        "job_id": payload["job_id"],
+        "status": payload["status"],
+        "created_at": payload["created_at"],
+        "updated_at": payload["updated_at"],
+    }
+    if payload.get("result") is not None:
+        response["result"] = payload["result"]
+    if payload.get("error") is not None:
+        response["error"] = payload["error"]
+    return jsonify(response), 200
 
 
 @bp.route("/models", methods=["GET"])

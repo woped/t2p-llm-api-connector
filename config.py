@@ -36,6 +36,15 @@ class BaseConfig:
     )
     TESTING = False
     WTF_CSRF_ENABLED = _env_bool("WTF_CSRF_ENABLED", default=False)
+    REDIS_HOST = os.environ.get("REDIS_HOST") or "127.0.0.1"
+    REDIS_PORT = int(os.environ.get("REDIS_PORT") or 6379)
+    REDIS_DB = int(os.environ.get("REDIS_DB") or 0)
+    REDIS_URL = os.environ.get("REDIS_URL") or (
+        f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+    )
+    REDIS_USE_MOCK = _env_bool("REDIS_USE_MOCK", default=False)
+    INTERNAL_ASYNC_ENABLED = _env_bool("INTERNAL_ASYNC_ENABLED", default=True)
+    ASYNC_JOB_TTL_SECONDS = int(os.environ.get("ASYNC_JOB_TTL_SECONDS") or 3600)
     SECRET_KEY = (
         os.environ.get("SECRET_KEY")
         or "fj92348759t182htpoihf9sd8gu98341hrpasdhuq8gpsiodfh9823r"
@@ -45,6 +54,7 @@ class BaseConfig:
 # === Development Configuration ===
 class DevelopmentConfig(BaseConfig):
     DEBUG = True
+    REDIS_USE_MOCK = _env_bool("REDIS_USE_MOCK", default=True)
 
 
 # === Production Configuration ===
@@ -63,6 +73,7 @@ class TestingConfig(BaseConfig):
         or os.environ.get("GOOGLE_API_KEY")
         or "test-gemini-key"
     )
+    REDIS_USE_MOCK = True
 
 
 # === Select Configuration Class Based on Environment ===

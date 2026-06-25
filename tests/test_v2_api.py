@@ -394,6 +394,49 @@ class TestV2Api(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json()["error"]["code"], "invalid_request")
 
+    # --- /internal/jobs/* -----------------------------------------------
+    @patch("app.api.routes.threading.Thread")
+    @patch("app.api.routes._job_store")
+    def test_internal_async_submit_returns_job_id(self, mock_job_store, mock_thread):
+        store = MagicMock()
+        store.create.return_value = "job-123"
+        mock_job_store.return_value = store
+
+        response = self.client.post(
+            "/internal/jobs/generate",
+            headers={"Authorization": "Bearer secret-token"},
+            json={
+                "user_text": "describe a process",
+                "provider": "openai",
+                "model": "gpt-4o",
+            },
+        )
+
+        self.assertEqual(response.status_code, 202)
+        payload = response.get_json()
+        self.assertEqual(payload["job_id"], "job-123")
+        self.assertEqual(payload["status"], "queued")
+        mock_thread.assert_called_once()
+
+    @patch("app.api.routes._job_store")
+    def test_internal_async_status_returns_job_payload(self, mock_job_store):
+        store = MagicMock()
+        store.get.return_value = {
+            "job_id": "job-123",
+            "status": "succeeded",
+            "created_at": 1.0,
+            "updated_at": 2.0,
+            "result": {"raw_response": "RAW BPMN JSON"},
+            "error": None,
+        }
+        mock_job_store.return_value = store
+
+        response = self.client.get("/internal/jobs/job-123")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["status"], "succeeded")
+        self.assertEqual(payload["result"]["raw_response"], "RAW BPMN JSON")
+
 
 if __name__ == "__main__":
     unittest.main()
