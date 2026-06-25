@@ -50,6 +50,24 @@ class TestAsyncJobStore(unittest.TestCase):
         ok = store.update_status("does-not-exist", "failed", error={"code": "x"})
         self.assertFalse(ok)
 
+    def test_mock_backend_is_shared_across_instances(self):
+        first = AsyncJobStore(
+            redis_url="redis://127.0.0.1:6379/9",
+            ttl_seconds=60,
+            use_mock=True,
+        )
+        second = AsyncJobStore(
+            redis_url="redis://127.0.0.1:6379/9",
+            ttl_seconds=60,
+            use_mock=True,
+        )
+
+        job_id = first.create()
+        payload = second.get(job_id)
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["job_id"], job_id)
+
 
 if __name__ == "__main__":
     unittest.main()

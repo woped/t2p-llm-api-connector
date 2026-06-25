@@ -14,6 +14,10 @@ except ImportError:  # pragma: no cover - optional dev/test dependency
     fakeredis = None
 
 
+_MOCK_CLIENT_LOCK = threading.Lock()
+_MOCK_CLIENTS = {}
+
+
 class _InMemoryRedis:
     """Tiny Redis-like fallback for tests/dev when no Redis client is available."""
 
@@ -55,9 +59,20 @@ class AsyncJobStore:
     @staticmethod
     def _build_client(redis_url, use_mock=False):
         if use_mock:
-            if fakeredis is not None:
-                return fakeredis.FakeStrictRedis(decode_responses=True)
-            return _InMemoryRedis()
+            # Share one mock backend per redis_url so job submit/status in
+            # separate requests see the same data during local dev/testing.
+            with _MOCK_CLIENT_LOCK:
+                cached = _MOCK_CLIENTS.get(redis_url)
+                if cached is not None:
+                    return cached
+
+                if fakeredis is not None:
+                    client = fakeredis.FakeStrictRedis(decode_responses=True)
+                else:
+                    client = _InMemoryRedis()
+
+                _MOCK_CLIENTS[redis_url] = client
+                return client
 
         if redis is None:
             raise RuntimeError("redis package is required for async job storage")
