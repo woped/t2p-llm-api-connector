@@ -81,6 +81,43 @@ class LLMService:
             f"{model_block}\n"
         )
 
+    @staticmethod
+    def _extract_openai_message_text(message):
+        """Normalize OpenAI message content into a plain string.
+
+        Some SDK/model combinations return ``message.content`` as a list of
+        typed content parts rather than a single string.
+        """
+        if message is None:
+            return ""
+
+        content = getattr(message, "content", None)
+        if isinstance(content, str):
+            return content.strip()
+
+        if isinstance(content, list):
+            text_parts = []
+            for part in content:
+                if isinstance(part, dict):
+                    if part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+                    continue
+
+                if getattr(part, "type", None) == "text":
+                    text_parts.append(getattr(part, "text", ""))
+
+            return "".join(text_parts).strip()
+
+        return ""
+
+    def _has_json_object(self, text):
+        """Return True when text contains a parseable JSON object."""
+        try:
+            self._extract_json_object(text)
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
     def _run_few_shot_orchestration(self, user_text, generate_once):
         """Run real multi-call few-shot extraction and merge with validation."""
         pack = self.prompt_builder.few_shot_prompt_pack
@@ -307,7 +344,33 @@ class LLMService:
                 chat_completion = client.chat.completions.create(**request_kwargs)
             else:
                 raise
-        return (chat_completion.choices[0].message.content or "").strip()
+
+        first_choice = chat_completion.choices[0] if chat_completion.choices else None
+        message = getattr(first_choice, "message", None)
+        content = LLMService._extract_openai_message_text(message)
+
+        finish_reason = getattr(first_choice, "finish_reason", None)
+        refusal = getattr(message, "refusal", None)
+        usage = getattr(chat_completion, "usage", None)
+        prompt_tokens = getattr(usage, "prompt_tokens", None)
+        completion_tokens = getattr(usage, "completion_tokens", None)
+
+        logger.debug(
+            "OpenAI completion metadata (model=%s, finish_reason=%s, prompt_tokens=%s, completion_tokens=%s, content_len=%d)",
+            getattr(chat_completion, "model", model),
+            finish_reason,
+            prompt_tokens,
+            completion_tokens,
+            len(content),
+        )
+        if not content:
+            logger.warning(
+                "OpenAI returned empty message content (model=%s, finish_reason=%s, refusal=%r)",
+                getattr(chat_completion, "model", model),
+                finish_reason,
+                refusal,
+            )
+        return content
 
     @staticmethod
     def _gemini_generate_once(gen_model, prompt):
@@ -364,6 +427,13 @@ class LLMService:
                     raise
 
             logger.info("Calling OpenAI chat.completions (model=%s)", model)
+            if prompting_strategy == "zero_shot":
+                prompt_preview = (prompt or "")[:240].replace("\n", "\\n")
+                logger.debug(
+                    "OpenAI zero-shot prompt preview (len=%d): %s",
+                    len(prompt or ""),
+                    prompt_preview,
+                )
             content = self._openai_generate_once(client, system_prompt, model, prompt)
             duration = time.time() - start_time
             logger.info(
@@ -371,6 +441,40 @@ class LLMService:
                 duration,
                 len(content),
             )
+            model_name = (model or "").lower()
+            if (
+                prompting_strategy == "zero_shot"
+                and model_name.startswith("gpt-5")
+                and not self._has_json_object(content)
+            ):
+                preview = (content or "")[:120].replace("\n", "\\n")
+                logger.warning(
+                    "OpenAI zero-shot produced non-JSON output for GPT-5 (len=%d, preview=%r); retrying with strict JSON reminder",
+                    len(content),
+                    preview,
+                )
+                retry_prompt = (
+                    f"{prompt}\n\n"
+                    f"{STRICT_JSON_REMINDER}\n"
+                    "Return exactly one JSON object."
+                )
+                content = self._openai_generate_once(
+                    client,
+                    system_prompt,
+                    model,
+                    retry_prompt,
+                )
+                logger.info(
+                    "OpenAI zero-shot retry received (len=%d, has_json=%s)",
+                    len(content),
+                    self._has_json_object(content),
+                )
+            if prompting_strategy == "zero_shot" and not content:
+                logger.warning(
+                    "OpenAI zero-shot returned empty content (model=%s, user_text_len=%d)",
+                    model,
+                    len(user_text or ""),
+                )
             return content.strip()
         except Exception as e:
             logger.exception("OpenAI call failed: %s", e)
