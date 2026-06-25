@@ -1,6 +1,20 @@
 import os
+from pathlib import Path
 
-from app.utils import LLM_SYSTEM_PROMPT
+
+def _load_system_prompt_from_txt():
+    """Load system prompt text from the zero-shot prompt template file."""
+    prompt_file = (
+        Path(__file__).parent
+        / "app"
+        / "utils"
+        / "zero-shot-prompts"
+        / "00_zero_shot_prompt.txt"
+    )
+    try:
+        return prompt_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 def _env_bool(name, default=False):
@@ -13,7 +27,7 @@ def _env_bool(name, default=False):
 
 # === Base Configuration ===
 class BaseConfig:
-    SYSTEM_PROMPT = LLM_SYSTEM_PROMPT
+    SYSTEM_PROMPT = _load_system_prompt_from_txt()
     # Optional provider hosts/base URLs (useful for proxies, gateways, or
     # enterprise endpoints).
     OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL") or os.environ.get("OPENAI_HOST")
