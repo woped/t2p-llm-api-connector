@@ -11,4 +11,9 @@
 #     sleep 5
 # done
 
-exec venv/bin/gunicorn -b :5000 --access-logfile - --error-logfile - llm-api-connector:app
+exec venv/bin/gunicorn \
+	-b :5000 \
+	--access-logfile - \
+	--error-logfile - \
+	--timeout "${GUNICORN_TIMEOUT:-600}" \
+	llm-api-connector:app
