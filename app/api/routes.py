@@ -133,6 +133,18 @@ def generate():
         provider = data["provider"]
         model = data["model"]
         prompting_strategy = data.get("prompting_strategy", "zero_shot")
+
+        # Refresh the model cache with the caller's key so is_valid reflects
+        # the live model list for that key rather than a stale startup cache.
+        try:
+            model_registry.refresh_model_cache(provider=provider, api_key=api_key)
+        except Exception as refresh_err:
+            logger.warning(
+                "Model cache refresh failed for provider %s: %s",
+                provider,
+                refresh_err,
+            )
+
         if not model_registry.is_valid(provider, model):
             status = "400"
             return _v2_error(
@@ -207,12 +219,18 @@ def generate():
     }
 )
 def models():
-    """Return the advertised provider/model pairs from the registry."""
+    """Return the advertised provider/model pairs from the registry.
+
+    If an ``Authorization: Bearer <key>`` header is present the key is used for
+    live discovery so the caller sees the model list available to their key.
+    Without a key the endpoint falls back to the env-level key (startup cache).
+    """
     start_time = time.time()
     status = "200"
     try:
         provider = request.args.get("provider") or None
-        model_registry.refresh_model_cache(provider=provider)
+        api_key = _extract_bearer_key()
+        model_registry.refresh_model_cache(provider=provider, api_key=api_key)
         return (
             jsonify({"models": model_registry.get_cached_models(provider=provider)}),
             200,

@@ -140,7 +140,7 @@ class TestMockedProcesses(unittest.TestCase):
                 system_prompt=self.system_prompt,
                 user_text=process_file.read_text(encoding="utf-8"),
                 prompting_strategy="few_shot",
-                model="gemini-1.5-pro",
+                model="gemini-2.0-flash",
             )
             parsed = json.loads(result)
             self.assertIn("events", parsed)
@@ -161,7 +161,7 @@ class TestMockedProcesses(unittest.TestCase):
                 system_prompt=self.system_prompt,
                 user_text=process_file.read_text(encoding="utf-8"),
                 prompting_strategy="zero_shot",
-                model="gemini-1.5-pro",
+                model="gemini-2.0-flash",
             )
             self.assertTrue(result)
 

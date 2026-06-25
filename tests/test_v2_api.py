@@ -40,7 +40,7 @@ class TestV2Api(unittest.TestCase):
     ):
         mock_get_cached_models.return_value = [
             {"provider": "openai", "model": "gpt-4o"},
-            {"provider": "gemini", "model": "gemini-1.5-pro"},
+            {"provider": "gemini", "model": "gemini-2.0-flash"},
         ]
         response = self.client.get("/models")
         self.assertEqual(response.status_code, 200)
@@ -48,8 +48,8 @@ class TestV2Api(unittest.TestCase):
         self.assertIn("models", data)
         pairs = {(m["provider"], m["model"]) for m in data["models"]}
         self.assertIn(("openai", "gpt-4o"), pairs)
-        self.assertIn(("gemini", "gemini-1.5-pro"), pairs)
-        mock_refresh_model_cache.assert_called_once_with(provider=None)
+        self.assertIn(("gemini", "gemini-2.0-flash"), pairs)
+        mock_refresh_model_cache.assert_called_once_with(provider=None, api_key=None)
         mock_get_cached_models.assert_called_once_with(provider=None)
 
     # --- /health/providers -----------------------------------------------
@@ -213,7 +213,7 @@ class TestV2Api(unittest.TestCase):
             json={
                 "user_text": "describe a process",
                 "provider": "gemini",
-                "model": "gemini-1.5-pro",
+                "model": "gemini-2.0-flash",
             },
         )
         self.assertEqual(response.status_code, 200)
@@ -274,7 +274,7 @@ class TestV2Api(unittest.TestCase):
             json={
                 "user_text": "x",
                 "provider": "gemini",
-                "model": "gemini-1.5-pro",
+                "model": "gemini-2.0-flash",
             },
         )
         self.assertEqual(response.status_code, 500)

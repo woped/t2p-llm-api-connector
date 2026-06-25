@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 # Fallback entries used only when provider discovery is unavailable.
 _FALLBACK_MODELS = {
-    "openai": ["gpt-4o"],
-    "gemini": ["gemini-1.5-pro"],
+    "openai": ["gpt-5-mini"],
+    "gemini": ["gemini-2.0-flash"],
 }
 
 # Maps a provider to the LLMService method name that dispatches the call.
@@ -106,17 +106,20 @@ def discover_models(provider, api_key=None):
     return list(_FALLBACK_MODELS.get(provider, []))
 
 
-def refresh_model_cache(provider=None):
+def refresh_model_cache(provider=None, api_key=None):
     """Refresh cached models for one provider or all supported providers.
 
-    Discovery uses provider-specific environment keys so the cache can be warmed
-    at startup and refreshed later without requiring per-request credentials.
+    When *api_key* is supplied the discovery call uses that key instead of
+    the environment key, so the cache always reflects what the caller's key
+    can actually access.
     """
     providers = [provider] if provider else list(_supported_providers())
     for current_provider in providers:
         if current_provider not in _supported_providers():
             continue
-        _MODEL_CACHE[current_provider] = discover_models(current_provider)
+        _MODEL_CACHE[current_provider] = discover_models(
+            current_provider, api_key=api_key
+        )
     return get_cached_models(provider=provider)
 
 
@@ -140,12 +143,19 @@ def list_models(provider=None):
 
 
 def is_valid(provider, model):
-    """Return True if the provider is supported.
+    """Return True if provider is supported and model is in the current cache.
 
-    Model-name validation is delegated to the provider so the connector can
-    accept newly released models without code changes.
+    The cache is refreshed with the request API key before this is called
+    (see the /generate route), so it reflects the live model list.
     """
-    return provider in _supported_providers() and bool(model)
+    if provider not in _supported_providers() or not model:
+        return False
+    cached = _MODEL_CACHE.get(provider, [])
+    # If the cache is still only the static fallback sentinel, accept any
+    # non-empty model name (discovery may have been skipped at startup).
+    if cached == list(_FALLBACK_MODELS.get(provider, [])):
+        return True
+    return model in cached
 
 
 def dispatch_method(provider):

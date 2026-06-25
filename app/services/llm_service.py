@@ -380,13 +380,15 @@ class LLMService:
         system_prompt,
         user_text,
         prompting_strategy,
-        model="gemini-1.5-pro",
+        model=None,
     ):
         """Call Google Gemini model.
 
-        ``model`` defaults to ``gemini-1.5-pro`` for backward compatibility; the
-        v2 ``/generate`` flow passes the model selected from the registry.
+        ``model`` is required; callers must pass the model from the request body
+        or the registry default.  None is rejected immediately.
         """
+        if not model:
+            raise ValueError("call_gemini: model must be specified")
         if not user_text:
             logger.warning("call_gemini: empty user_text provided")
         start_time = time.time()
