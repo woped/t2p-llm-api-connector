@@ -13,6 +13,10 @@ from app.utils.prompt_builder import PromptBuilder, STRICT_JSON_REMINDER
 logger = logging.getLogger(__name__)
 
 
+class EmptyResponseError(ValueError):
+    """Raised when the provider returns no usable completion text."""
+
+
 class LLMService:
     """Service class for handling LLM API calls"""
 
@@ -136,7 +140,11 @@ class LLMService:
                 raise ValueError(f"Missing few-shot prompt file: {file_name}")
 
         def compose_prompt(step_text, known_elements=None, partial_outputs=None):
-            body = step_text.replace("{{PROCESS_TEXT}}", user_text)
+            body = step_text.replace(
+                "{{PROCESS_TEXT}}",
+                "Summarized process context (derived from full input):\n"
+                f"{process_context}",
+            )
             if "{{KNOWN_ELEMENTS_JSON}}" in body:
                 body = body.replace(
                     "{{KNOWN_ELEMENTS_JSON}}",
@@ -174,6 +182,26 @@ class LLMService:
                     raise ValueError(
                         f"Few-shot step '{step_name}' did not return a JSON object after retry."
                     ) from first_error
+
+        # Build a compact context once from the raw process text so follow-up
+        # steps do not need the full source text again.
+        context_summary_prompt = (
+            "You are preparing context for a multi-step BPMN extraction pipeline.\n"
+            f"{shared}\n\n"
+            f"{STRICT_JSON_REMINDER}\n"
+            "Return exactly one JSON object with this schema:\n"
+            '{"process_context": "..."}\n\n'
+            "The value of process_context must be a concise but complete summary "
+            "of the process text (actors, activities, decisions, loops, end states). "
+            "Preserve factual order and key constraints.\n\n"
+            "PROCESS TEXT:\n"
+            f"{user_text}"
+        )
+
+        context_obj = run_json_step("context_summary", context_summary_prompt)
+        process_context = (context_obj.get("process_context") or "").strip()
+        if not process_context:
+            raise ValueError("few-shot context_summary returned empty process_context")
 
         partials = {}
 
@@ -370,6 +398,7 @@ class LLMService:
                 finish_reason,
                 refusal,
             )
+            raise EmptyResponseError("OpenAI returned empty message content.")
         return content
 
     @staticmethod
@@ -380,7 +409,10 @@ class LLMService:
                 temperature=0.0, top_k=1, top_p=1.0, max_output_tokens=2048
             ),
         )
-        return ((response.text or "") if hasattr(response, "text") else "").strip()
+        text = ((response.text or "") if hasattr(response, "text") else "").strip()
+        if not text:
+            raise EmptyResponseError("Gemini returned empty response text.")
+        return text
 
     def call_openai(
         self, api_key, system_prompt, user_text, prompting_strategy, model="gpt-4o"
@@ -475,6 +507,7 @@ class LLMService:
                     model,
                     len(user_text or ""),
                 )
+                raise EmptyResponseError("OpenAI zero-shot returned empty content.")
             return content.strip()
         except Exception as e:
             logger.exception("OpenAI call failed: %s", e)

@@ -37,6 +37,11 @@ class TestMockedProcesses(unittest.TestCase):
 
     def _few_shot_step_payloads(self):
         return [
+            {
+                "process_context": (
+                    "Customer requests handling flow with start, task execution, and end."
+                )
+            },
             {"events": [{"id": "startEvent1", "type": "startEvent", "name": "Start"}]},
             {"tasks": [{"id": "task1", "type": "userTask", "name": "Handle request"}]},
             {"gateways": []},

@@ -7,7 +7,7 @@ from flask import current_app, jsonify, request
 
 from app.api import bp
 from app.services import model_registry
-from app.services.llm_service import LLMService
+from app.services.llm_service import EmptyResponseError, LLMService
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +189,15 @@ def generate():
         return jsonify({"raw_response": raw_response}), 200
 
     except Exception as e:
+        if isinstance(e, EmptyResponseError):
+            status = "400"
+            logger.warning("/generate rejected empty provider response: %s", e)
+            return _v2_error(
+                400,
+                "invalid_request",
+                "The LLM provider returned an empty response.",
+            )
+
         if _is_quota_error(e):
             status = "429"
             logger.warning("/generate provider quota exceeded: %s", e)

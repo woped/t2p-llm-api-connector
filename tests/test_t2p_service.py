@@ -128,6 +128,11 @@ class TestT2PService(unittest.TestCase):
     @patch("app.services.llm_service.OpenAI")
     def test_few_shot_openai_runs_multi_call_orchestration(self, mock_openai):
         responses = [
+            {
+                "process_context": (
+                    "A mechanic inspects a bike, repairs it, and then finishes the process."
+                )
+            },
             {"events": [{"id": "startEvent1", "type": "startEvent", "name": "start"}]},
             {"tasks": [{"id": "task1", "type": "userTask", "name": "inspect bike"}]},
             {"gateways": []},
@@ -191,7 +196,7 @@ class TestT2PService(unittest.TestCase):
         self.assertIn("tasks", parsed)
         self.assertIn("flows", parsed)
         self.assertGreaterEqual(
-            mock_openai.return_value.chat.completions.create.call_count, 6
+            mock_openai.return_value.chat.completions.create.call_count, 7
         )
         first_call_messages = (
             mock_openai.return_value.chat.completions.create.call_args_list[0].kwargs[
@@ -203,6 +208,11 @@ class TestT2PService(unittest.TestCase):
     @patch("app.services.llm_service.OpenAI")
     def test_few_shot_retries_when_step_returns_non_json(self, mock_openai):
         responses = [
+            {
+                "process_context": (
+                    "A mechanic inspects a bike, repairs it, and then finishes the process."
+                )
+            },
             {"events": [{"id": "startEvent1", "type": "startEvent", "name": "start"}]},
             {"tasks": [{"id": "task1", "type": "userTask", "name": "inspect bike"}]},
             {"gateways": []},
@@ -272,7 +282,7 @@ class TestT2PService(unittest.TestCase):
         parsed = json.loads(result)
         self.assertIn("flows", parsed)
         self.assertGreaterEqual(
-            mock_openai.return_value.chat.completions.create.call_count, 7
+            mock_openai.return_value.chat.completions.create.call_count, 8
         )
 
     def test_validator_rejects_fake_split_gateway_and_missing_loop(self):
