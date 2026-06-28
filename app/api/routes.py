@@ -75,9 +75,9 @@ def _log_total_token_usage(usage_records, provider, model):
     actual = sum(costs) if costs else None
     full = sum(costs_full) if costs_full else None
     cost_str = log_utils.format_cost(actual, full, cached, compare=True)
-    # Logged as two separate records so each gets its own timestamp/level prefix
-    # and the breakdown line stays aligned (a single wrapped record would put the
-    # continuation flush-left, out of step with the prefixed lines around it).
+    # Logged as two separate records so each gets its own timestamp/level prefix.
+    # The breakdown line starts with the arrow flush against the message (no
+    # leading indent), so it reads as a clear continuation of the line above.
     logger.info(
         "Total token usage for request: %d LLM call(s) (provider=%s, model=%s)",
         len(usage_records),
@@ -85,7 +85,7 @@ def _log_total_token_usage(usage_records, provider, model):
         model,
     )
     logger.info(
-        "  -> input=%d (cached=%d) output=%d total=%s%s",
+        "-> input=%d (cached=%d) output=%d total=%s%s",
         prompt,
         cached,
         completion,
