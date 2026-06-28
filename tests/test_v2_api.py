@@ -21,6 +21,11 @@ class TestV2Api(unittest.TestCase):
         mock_response = MagicMock()
         mock_response.output_text = content
         mock_response.status = "completed"  # not truncated/incomplete
+        # Realistic token usage so the cost-estimation path runs on real ints.
+        mock_response.usage.input_tokens = 100
+        mock_response.usage.output_tokens = 200
+        mock_response.usage.total_tokens = 300
+        mock_response.usage.input_tokens_details.cached_tokens = 0
         mock_openai.return_value.responses.parse.return_value = mock_response
 
     def _mock_gemini(self, mock_genai, content="RAW GEMINI JSON"):
@@ -30,6 +35,11 @@ class TestV2Api(unittest.TestCase):
         candidate = MagicMock()
         candidate.finish_reason.name = "STOP"  # finished cleanly
         mock_response.candidates = [candidate]
+        # Realistic token usage so the cost-estimation path runs on real ints.
+        mock_response.usage_metadata.prompt_token_count = 100
+        mock_response.usage_metadata.candidates_token_count = 200
+        mock_response.usage_metadata.total_token_count = 300
+        mock_response.usage_metadata.cached_content_token_count = 0
         mock_genai.Client.return_value.models.generate_content.return_value = (
             mock_response
         )
@@ -43,6 +53,34 @@ class TestV2Api(unittest.TestCase):
         pairs = {(m["provider"], m["model"]) for m in data["models"]}
         self.assertIn(("openai", "gpt-4o"), pairs)
         self.assertIn(("gemini", "gemini-3.5-flash"), pairs)
+
+    # --- cost estimation --------------------------------------------------
+    def test_estimate_cost_uses_registry_pricing(self):
+        from app.services import model_registry
+
+        # gpt-5.4-mini: input $0.75/1M, output $4.50/1M.
+        cost = model_registry.estimate_cost("openai", "gpt-5.4-mini", 1_000_000, 1_000_000)
+        self.assertAlmostEqual(cost, 0.75 + 4.50)
+
+    def test_estimate_cost_discounts_cached_input(self):
+        from app.services import model_registry
+
+        # 1M prompt tokens all cached -> billed at the cached rate ($0.075/1M),
+        # not the standard input rate.
+        cost = model_registry.estimate_cost(
+            "openai", "gpt-5.4-mini", 1_000_000, 0, cached_tokens=1_000_000
+        )
+        self.assertAlmostEqual(cost, 0.075)
+
+    def test_estimate_cost_none_for_non_integer_or_unknown(self):
+        from app.services import model_registry
+
+        # No usable counts -> no cost (avoids printing a bogus figure).
+        self.assertIsNone(
+            model_registry.estimate_cost("openai", "gpt-5.4-mini", None, 10)
+        )
+        # Unpriced/unknown model -> no cost.
+        self.assertIsNone(model_registry.estimate_cost("openai", "bogus", 10, 10))
 
     # --- /generate success ------------------------------------------------
     @patch("app.services.llm_service.OpenAI")

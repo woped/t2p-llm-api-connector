@@ -12,6 +12,11 @@ from flask_swagger_ui import get_swaggerui_blueprint
 # installed a second root handler and every line was emitted twice (plain + JSON).
 logger = logging.getLogger(__name__)
 
+# Endpoints that are polled/automated rather than user-driven; they do not get a
+# request separator so the console stays focused on real /generate traffic.
+# ``str.startswith`` accepts this tuple directly.
+_QUIET_PATHS = ("/metrics", "/docs", "/openapi.yaml", "/_/_/echo", "/static", "/favicon.ico")
+
 
 def create_app(config_class=None):
     """Application factory pattern"""
@@ -66,6 +71,12 @@ def create_app(config_class=None):
     @app.before_request
     def _log_request_start():
         g._start_time = time.time()
+        # Emit a visual separator so each request's log block is easy to spot in
+        # the console. Skipped for noise endpoints (health/metrics/docs/static)
+        # so only meaningful requests start a new block. The separator is
+        # rendered only by the pretty console formatter (dropped in JSON mode).
+        if not request.path.startswith(_QUIET_PATHS):
+            logger.info("", extra={"separator": True})
         logger.debug("%s %s -> start", request.method, request.path)
 
     @app.after_request

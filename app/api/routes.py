@@ -38,6 +38,50 @@ _MAX_GENERATION_ATTEMPTS = 3
 _RETRY_TEMPERATURE = 0.3
 
 
+def _format_issues(issues):
+    """Render validation problems as an indented, one-per-line bulleted list.
+
+    Produces output like::
+
+        Issues:
+          - first problem
+          - second problem
+
+    so a multi-problem rejection is readable in the console instead of a single
+    semicolon-run line.
+    """
+    return "\n" + "\n".join(f"  - {issue}" for issue in issues)
+
+
+def _log_total_token_usage(usage_records, provider, model):
+    """Log the token usage summed across every attempt of one request.
+
+    No-op when nothing was recorded (token logging disabled, or a mocked
+    service in tests). Lives in the route rather than the service because the
+    per-request total spans the multiple service calls the retry loop owns.
+    """
+    if not usage_records:
+        return
+    prompt = sum(u["prompt"] for u in usage_records)
+    completion = sum(u["completion"] for u in usage_records)
+    total = sum(u["total"] for u in usage_records)
+    # Cost is omitted for any attempt on an unpriced model, so only sum the known
+    # ones and append the figure only when at least one attempt was priced.
+    costs = [u["cost"] for u in usage_records if u.get("cost") is not None]
+    cost_str = f" cost=${sum(costs):.6f}" if costs else ""
+    logger.info(
+        "Total token usage for request: %d LLM call(s) (provider=%s, model=%s) "
+        "-> prompt=%d completion=%d total=%d%s",
+        len(usage_records),
+        provider,
+        model,
+        prompt,
+        completion,
+        total,
+        cost_str,
+    )
+
+
 def _generate_validated(**generate_kwargs):
     """Generate a process model, regenerating until it passes validation.
 
@@ -54,34 +98,76 @@ def _generate_validated(**generate_kwargs):
     attempt fails, so the caller can surface a meaningful reason instead of a
     generic error.
     """
+    provider = generate_kwargs.get("provider")
+    model_name = generate_kwargs.get("model")
+    # Token usage of each attempt is collected here so the total across all
+    # retries can be logged once when the request finishes (success or failure).
+    usage_out = []
     feedback = None
     previous_model = None
-    for attempt in range(1, _MAX_GENERATION_ATTEMPTS + 1):
-        # Deterministic first attempt; regenerations use a small non-zero
-        # temperature so a rejected output is not reproduced verbatim, and carry
-        # the previous attempt's validation problems plus the rejected model so
-        # the model applies the fixes to that exact model instead of diverging.
-        generate_kwargs["temperature"] = 0.0 if attempt == 1 else _RETRY_TEMPERATURE
-        raw_response = _llm_service.generate(
-            **generate_kwargs, feedback=feedback, previous_model=previous_model
-        )
-        try:
-            model = json.loads(raw_response)
-        except (json.JSONDecodeError, TypeError):
-            return raw_response
-        try:
-            validate_model(model)
-            return raw_response
-        except ValidationError as e:
-            feedback = str(e)
-            previous_model = raw_response
+    try:
+        for attempt in range(1, _MAX_GENERATION_ATTEMPTS + 1):
+            # Deterministic first attempt; regenerations use a small non-zero
+            # temperature so a rejected output is not reproduced verbatim, and
+            # carry the previous attempt's validation problems plus the rejected
+            # model so the model fixes that exact model instead of diverging.
+            temperature = 0.0 if attempt == 1 else _RETRY_TEMPERATURE
+            generate_kwargs["temperature"] = temperature
             logger.info(
-                "Generation attempt %d/%d failed validation; retrying. Issues: %s",
+                "Generation attempt %d/%d (provider=%s, model=%s, temperature=%s, %s)",
                 attempt,
                 _MAX_GENERATION_ATTEMPTS,
-                feedback,
+                provider,
+                model_name,
+                temperature,
+                "with correction feedback" if feedback else "first try, no feedback",
             )
-    raise ValidationError(feedback)
+            raw_response = _llm_service.generate(
+                **generate_kwargs,
+                feedback=feedback,
+                previous_model=previous_model,
+                usage_out=usage_out,
+            )
+            try:
+                model = json.loads(raw_response)
+            except (json.JSONDecodeError, TypeError):
+                logger.info(
+                    "Attempt %d/%d returned non-JSON output; passing through "
+                    "unvalidated.",
+                    attempt,
+                    _MAX_GENERATION_ATTEMPTS,
+                )
+                return raw_response
+            try:
+                validate_model(model)
+                logger.info(
+                    "Generation attempt %d/%d passed validation.",
+                    attempt,
+                    _MAX_GENERATION_ATTEMPTS,
+                )
+                return raw_response
+            except ValidationError as e:
+                feedback = str(e)
+                previous_model = raw_response
+                if attempt < _MAX_GENERATION_ATTEMPTS:
+                    logger.warning(
+                        "Generation attempt %d/%d failed validation; retrying with "
+                        "feedback. Issues:%s",
+                        attempt,
+                        _MAX_GENERATION_ATTEMPTS,
+                        _format_issues(e.issues),
+                    )
+                else:
+                    logger.error(
+                        "Generation attempt %d/%d failed validation; no attempts "
+                        "left. Giving up. Last issues:%s",
+                        attempt,
+                        _MAX_GENERATION_ATTEMPTS,
+                        _format_issues(e.issues),
+                    )
+        raise ValidationError(feedback)
+    finally:
+        _log_total_token_usage(usage_out, provider, model_name)
 
 
 # --- v2 contract API (consumed by t2p-2.0) --------------------------------
@@ -136,6 +222,16 @@ def generate():
         missing = [f for f in ("user_text", "provider", "model") if not data.get(f)]
         if missing:
             status = "400"
+            # Log what actually arrived so a malformed client request is
+            # diagnosable from the server logs: this rejection happens before any
+            # LLM call or retry, so an empty/wrong-shaped body lands here, not in
+            # the generation loop.
+            logger.warning(
+                "/generate rejected (invalid_request): missing/empty %s; "
+                "body keys received: %s",
+                missing,
+                sorted(data.keys()),
+            )
             return _v2_error(
                 400,
                 "invalid_request",

@@ -140,25 +140,50 @@ class LLMService:
         )
         return text
 
-    def _log_token_usage(
-        self, provider, model, prompt_tokens, completion_tokens, total_tokens
+    def _record_usage(
+        self,
+        provider,
+        model,
+        usage_out,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+        cached_tokens=0,
     ):
-        """Emit the token usage of a successful provider call (when enabled).
+        """Emit a successful call's token usage and accumulate it for the caller.
 
         Provider-agnostic: each call site reads the counts from that provider's
         own usage object and passes them in. No-op unless token logging is
-        enabled (see ``_token_logging_enabled``), so production stays quiet.
+        enabled (see ``_token_logging_enabled``), so production stays quiet. The
+        per-call cost is estimated from the registry's pricing and appended to
+        the log line (omitted when the model is unpriced). When an ``usage_out``
+        list is supplied the counts and cost are also appended to it, so the
+        retry loop can total tokens and cost across all attempts of a request.
         """
         if not _token_logging_enabled():
             return
+        cost = model_registry.estimate_cost(
+            provider, model, prompt_tokens, completion_tokens, cached_tokens
+        )
+        cost_str = f" cost=${cost:.6f}" if cost is not None else ""
         logger.info(
-            "%s token usage (model=%s): prompt=%s completion=%s total=%s",
+            "%s token usage (model=%s): prompt=%s completion=%s total=%s%s",
             provider,
             model,
             prompt_tokens,
             completion_tokens,
             total_tokens,
+            cost_str,
         )
+        if usage_out is not None:
+            usage_out.append(
+                {
+                    "prompt": prompt_tokens or 0,
+                    "completion": completion_tokens or 0,
+                    "total": total_tokens or 0,
+                    "cost": cost,
+                }
+            )
 
     def _fail(self, provider, exc):
         """Log the traceback and build a ProviderError for the failed call.
@@ -179,6 +204,7 @@ class LLMService:
         temperature=0.0,
         feedback=None,
         previous_model=None,
+        usage_out=None,
     ):
         """Call an OpenAI model via the Responses API with Structured Outputs.
 
@@ -241,12 +267,17 @@ class LLMService:
 
         usage = getattr(response, "usage", None)
         if usage is not None:
-            self._log_token_usage(
+            cached = getattr(
+                getattr(usage, "input_tokens_details", None), "cached_tokens", 0
+            )
+            self._record_usage(
                 "openai",
                 model,
+                usage_out,
                 getattr(usage, "input_tokens", None),
                 getattr(usage, "output_tokens", None),
                 getattr(usage, "total_tokens", None),
+                cached,
             )
         return self._finish("openai", response.output_text, start_time)
 
@@ -260,6 +291,7 @@ class LLMService:
         temperature=0.0,
         feedback=None,
         previous_model=None,
+        usage_out=None,
     ):
         """Call a Google Gemini model via the unified ``google-genai`` SDK.
 
@@ -333,12 +365,15 @@ class LLMService:
 
         usage = getattr(response, "usage_metadata", None)
         if usage is not None:
-            self._log_token_usage(
+            cached = getattr(usage, "cached_content_token_count", 0)
+            self._record_usage(
                 "gemini",
                 model,
+                usage_out,
                 getattr(usage, "prompt_token_count", None),
                 getattr(usage, "candidates_token_count", None),
                 getattr(usage, "total_token_count", None),
+                cached,
             )
         return self._finish("gemini", response.text, start_time)
 
@@ -353,6 +388,7 @@ class LLMService:
         temperature=0.0,
         feedback=None,
         previous_model=None,
+        usage_out=None,
     ):
         """Provider-agnostic entry point used by the v2 ``/generate`` route.
 
@@ -379,4 +415,5 @@ class LLMService:
             temperature=temperature,
             feedback=feedback,
             previous_model=previous_model,
+            usage_out=usage_out,
         )

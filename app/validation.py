@@ -14,7 +14,22 @@ _NODE_GROUPS = ("events", "tasks", "gateways")
 
 
 class ValidationError(ValueError):
-    """Raised when the model fails one or more validators."""
+    """Raised when the model fails one or more validators.
+
+    Carries the individual problem messages in ``issues`` so callers can format
+    them (e.g. a bulleted log) without re-splitting. ``str(error)`` stays the
+    ``"; "``-joined message for backward compatibility with the API error body.
+    Accepts either a list of issues or a single pre-joined string.
+    """
+
+    def __init__(self, issues):
+        if isinstance(issues, str):
+            self.issues = [issues] if issues else []
+            message = issues
+        else:
+            self.issues = list(issues)
+            message = "; ".join(self.issues)
+        super().__init__(message)
 
 
 # --- helpers --------------------------------------------------------------
@@ -198,5 +213,5 @@ def validate_model(model):
     """
     issues = [problem for validator in VALIDATORS for problem in validator(model)]
     if issues:
-        raise ValidationError("; ".join(issues))
+        raise ValidationError(issues)
     return model
