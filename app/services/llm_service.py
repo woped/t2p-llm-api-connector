@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from openai import OpenAI
 from google import genai
@@ -29,6 +30,21 @@ class ProviderError(Exception):
     def __init__(self, message, upstream_status=None):
         self.upstream_status = upstream_status  # int HTTP status, if known
         super().__init__(message)
+
+
+def _token_logging_enabled():
+    """Whether per-call token usage should be logged.
+
+    Opt-in by design: it is on automatically when running in development (the
+    local ``flask run`` / ``FLASK_ENV=development`` case), and can be forced on
+    or off regardless of environment via ``LOG_TOKEN_USAGE`` (``1/true/yes/on``
+    vs anything else). Evaluated per call so the env var takes effect without a
+    restart and tests can flip it freely.
+    """
+    flag = os.environ.get("LOG_TOKEN_USAGE")
+    if flag is not None:
+        return flag.strip().lower() in ("1", "true", "yes", "on")
+    return os.environ.get("FLASK_ENV", "development").lower() == "development"
 
 
 def _upstream_status(exc):
@@ -124,6 +140,26 @@ class LLMService:
         )
         return text
 
+    def _log_token_usage(
+        self, provider, model, prompt_tokens, completion_tokens, total_tokens
+    ):
+        """Emit the token usage of a successful provider call (when enabled).
+
+        Provider-agnostic: each call site reads the counts from that provider's
+        own usage object and passes them in. No-op unless token logging is
+        enabled (see ``_token_logging_enabled``), so production stays quiet.
+        """
+        if not _token_logging_enabled():
+            return
+        logger.info(
+            "%s token usage (model=%s): prompt=%s completion=%s total=%s",
+            provider,
+            model,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+        )
+
     def _fail(self, provider, exc):
         """Log the traceback and build a ProviderError for the failed call.
 
@@ -201,6 +237,16 @@ class LLMService:
             raise ProviderError(
                 f"OpenAI returned an incomplete response (reason={reason}); the "
                 f"model likely hit max_output_tokens={_MAX_OUTPUT_TOKENS}."
+            )
+
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            self._log_token_usage(
+                "openai",
+                model,
+                getattr(usage, "input_tokens", None),
+                getattr(usage, "output_tokens", None),
+                getattr(usage, "total_tokens", None),
             )
         return self._finish("openai", response.output_text, start_time)
 
@@ -283,6 +329,16 @@ class LLMService:
             raise ProviderError(
                 f"Gemini did not finish cleanly (finish_reason={finish}); output "
                 f"may exceed max_output_tokens={_MAX_OUTPUT_TOKENS} or was blocked."
+            )
+
+        usage = getattr(response, "usage_metadata", None)
+        if usage is not None:
+            self._log_token_usage(
+                "gemini",
+                model,
+                getattr(usage, "prompt_token_count", None),
+                getattr(usage, "candidates_token_count", None),
+                getattr(usage, "total_token_count", None),
             )
         return self._finish("gemini", response.text, start_time)
 
