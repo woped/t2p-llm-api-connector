@@ -3,6 +3,7 @@ import os
 import time
 from openai import OpenAI
 from google import genai
+from app import log_utils
 from app.utils.prompt_builder import PromptBuilder
 from app.schemas import ProcessModel
 from app.services import model_registry
@@ -162,26 +163,38 @@ class LLMService:
         """
         if not _token_logging_enabled():
             return
+        # Actual cost (cached tokens billed at the reduced rate) and the
+        # hypothetical no-cache cost, so the log can show the saving side by side.
         cost = model_registry.estimate_cost(
             provider, model, prompt_tokens, completion_tokens, cached_tokens
         )
-        cost_str = f" cost=${cost:.6f}" if cost is not None else ""
+        cost_full = model_registry.estimate_cost(
+            provider, model, prompt_tokens, completion_tokens, 0
+        )
+        # ``prompt_tokens`` is the *total* input reported by the provider and
+        # already includes the cached portion; ``cached`` is shown alongside so
+        # the cache hit (e.g. the shared prefix reused on a retry) is visible.
+        cached = cached_tokens if model_registry._is_count(cached_tokens) else 0
+        cost_str = log_utils.format_cost(cost, cost_full, cached)
         logger.info(
-            "%s token usage (model=%s): prompt=%s completion=%s total=%s%s",
+            "%s token usage (model=%s): input=%s (cached=%s) output=%s total=%s%s",
             provider,
             model,
             prompt_tokens,
+            cached,
             completion_tokens,
-            total_tokens,
-            cost_str,
+            log_utils.emphasize(total_tokens, log_utils.BOLD, log_utils.CYAN),
+            f" {cost_str}" if cost_str else "",
         )
         if usage_out is not None:
             usage_out.append(
                 {
                     "prompt": prompt_tokens or 0,
+                    "cached": cached,
                     "completion": completion_tokens or 0,
                     "total": total_tokens or 0,
                     "cost": cost,
+                    "cost_full": cost_full,
                 }
             )
 
@@ -366,12 +379,23 @@ class LLMService:
         usage = getattr(response, "usage_metadata", None)
         if usage is not None:
             cached = getattr(usage, "cached_content_token_count", 0)
+            # Gemini bills thinking tokens at the output rate, but they are NOT
+            # included in ``candidates_token_count`` — so add them to get the true
+            # billable output. (OpenAI, by contrast, already folds reasoning
+            # tokens into ``output_tokens``.)
+            candidates = getattr(usage, "candidates_token_count", None)
+            thoughts = getattr(usage, "thoughts_token_count", None)
+            output = candidates
+            if model_registry._is_count(candidates) and model_registry._is_count(
+                thoughts
+            ):
+                output = candidates + thoughts
             self._record_usage(
                 "gemini",
                 model,
                 usage_out,
                 getattr(usage, "prompt_token_count", None),
-                getattr(usage, "candidates_token_count", None),
+                output,
                 getattr(usage, "total_token_count", None),
                 cached,
             )

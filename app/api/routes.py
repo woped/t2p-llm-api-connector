@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+from app import log_utils
 from app.api import bp
 from app.services.llm_service import LLMService, ProviderError
 from app.services import model_registry
@@ -63,22 +64,33 @@ def _log_total_token_usage(usage_records, provider, model):
     if not usage_records:
         return
     prompt = sum(u["prompt"] for u in usage_records)
+    cached = sum(u.get("cached", 0) for u in usage_records)
     completion = sum(u["completion"] for u in usage_records)
     total = sum(u["total"] for u in usage_records)
     # Cost is omitted for any attempt on an unpriced model, so only sum the known
-    # ones and append the figure only when at least one attempt was priced.
+    # ones. ``cost`` is the actual (cache-discounted) figure; ``cost_full`` the
+    # hypothetical no-cache figure, so the saving can be shown for comparison.
     costs = [u["cost"] for u in usage_records if u.get("cost") is not None]
-    cost_str = f" cost=${sum(costs):.6f}" if costs else ""
+    costs_full = [u["cost_full"] for u in usage_records if u.get("cost_full") is not None]
+    actual = sum(costs) if costs else None
+    full = sum(costs_full) if costs_full else None
+    cost_str = log_utils.format_cost(actual, full, cached, compare=True)
+    # Logged as two separate records so each gets its own timestamp/level prefix
+    # and the breakdown line stays aligned (a single wrapped record would put the
+    # continuation flush-left, out of step with the prefixed lines around it).
     logger.info(
-        "Total token usage for request: %d LLM call(s) (provider=%s, model=%s) "
-        "-> prompt=%d completion=%d total=%d%s",
+        "Total token usage for request: %d LLM call(s) (provider=%s, model=%s)",
         len(usage_records),
         provider,
         model,
+    )
+    logger.info(
+        "  -> input=%d (cached=%d) output=%d total=%s%s",
         prompt,
+        cached,
         completion,
-        total,
-        cost_str,
+        log_utils.emphasize(total, log_utils.BOLD, log_utils.CYAN),
+        f" {cost_str}" if cost_str else "",
     )
 
 

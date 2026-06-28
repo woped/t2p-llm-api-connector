@@ -1,7 +1,7 @@
 import logging
 import os
 import sys
-from app import create_app
+from app import create_app, log_utils
 from pythonjsonlogger import jsonlogger
 
 
@@ -132,6 +132,8 @@ def _select_console_formatter():
             use_color = sys.stdout.isatty()
         if use_color:
             _enable_windows_ansi()
+        # Let in-message highlighting (token totals, cost) follow the same toggle.
+        log_utils.set_color_enabled(use_color)
         return ColorFormatter(use_color=use_color)
 
     return jsonlogger.JsonFormatter(
@@ -144,6 +146,10 @@ def setup_logging():
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
 
+    # Only set werkzeug's level. It propagates to the root logger, so the single
+    # root handler below already formats and prints its request lines. Attaching
+    # the same handler here too would emit every werkzeug record twice (once via
+    # this handler, once via propagation) — the cause of the duplicated lines.
     werkzeug_logger = logging.getLogger("werkzeug")
     werkzeug_logger.setLevel(logging.INFO)
 
@@ -156,7 +162,6 @@ def setup_logging():
     console_handler.addFilter(SeparatorFilter(isinstance(formatter, ColorFormatter)))
 
     logger.addHandler(console_handler)
-    werkzeug_logger.addHandler(console_handler)
 
 
 setup_logging()

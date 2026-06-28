@@ -51,7 +51,7 @@ _REGISTRY = {
         # legacy, backward compatibility
         "gpt-4o": {
             "supports_temperature": True,
-            "pricing": {"input": 2.50, "cached_input": 0.125, "output": 10.00},
+            "pricing": {"input": 2.50, "cached_input": 1.25, "output": 10.00},
         },
     },
     "gemini": {

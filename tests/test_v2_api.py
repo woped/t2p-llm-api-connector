@@ -38,6 +38,7 @@ class TestV2Api(unittest.TestCase):
         # Realistic token usage so the cost-estimation path runs on real ints.
         mock_response.usage_metadata.prompt_token_count = 100
         mock_response.usage_metadata.candidates_token_count = 200
+        mock_response.usage_metadata.thoughts_token_count = 0
         mock_response.usage_metadata.total_token_count = 300
         mock_response.usage_metadata.cached_content_token_count = 0
         mock_genai.Client.return_value.models.generate_content.return_value = (
