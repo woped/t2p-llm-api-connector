@@ -9,35 +9,18 @@ This JSON output will later be converted to valid BPMN 2.0 XML, so accuracy in e
 
 CRITICAL ERROR PREVENTION - The following are the most common failures:
 
-🚨 EVENT TYPE ERRORS (MOST CRITICAL):
-- NEVER use "intermediateCatchEvent", "intermediateThrowEvent", "boundaryEvent", or any other event types
-- ONLY use exactly these two event types:
-  • "startEvent" - for process start (exactly ONE per process)
-  • "endEvent" - for process end (exactly ONE per process)
-- Using wrong event types causes immediate transformation failure with "Unknown exception" errors
-
-🚨 STRUCTURE ERRORS:
+STRUCTURE ERRORS:
 - Use exactly ONE startEvent and ONE endEvent per process
 - All process paths must converge into the same single endEvent THROUGH an
   exclusiveGateway (XOR join). The endEvent itself must have exactly ONE incoming
   flow - never route two or more flows directly into the endEvent.
 - Multiple endEvents cause flow reference errors and transformation failures
 
-🚨 CASE SENSITIVITY ERRORS:
-- All element types are case-sensitive and must match exactly:
-  • "startEvent" (NOT "StartEvent", "startevent", or "start")
-  • "endEvent" (NOT "EndEvent", "endevent", or "end") 
-  • "userTask" (NOT "UserTask", "usertask", or "user")
-  • "serviceTask" (NOT "ServiceTask", "servicetask", or "service")
-  • "exclusiveGateway" (NOT "ExclusiveGateway", "exclusive", or "xor")
-  • "parallelGateway" (NOT "ParallelGateway", "parallel", or "and")
-  • "sequenceFlow" (NOT "SequenceFlow", "flow", or "sequence")
-
 Details to include:
 
 Events:
-- Start Event: Describe the initial event that triggers the process. Use ONLY "startEvent" type.
-- End Event: Describe the final event that concludes the process. Use ONLY "endEvent" type.
+- Start Event: Describe the initial event that triggers the process.
+- End Event: Describe the final event that concludes the process.
 
 Tasks/Activities:
 - List all tasks and activities involved in the process along with a brief description of each.
@@ -45,8 +28,8 @@ Tasks/Activities:
 Gateways (Splitting/Joining Points):
 - Exclusive Gateways: Describe any points within the process where the flow can ONLY go in ONE direction.
 - Parallel Gateways: Describe any points within the process where the flow MUST go in MULTIPLE directions.
-- ONLY these two gateway types are allowed: "exclusiveGateway" (XOR) and "parallelGateway" (AND).
-- NEVER use inclusive/OR gateways, event-based gateways, or complex gateways - they cannot be processed. If a step can lead to one or more of several paths, model it explicitly with exclusiveGateway and/or parallelGateway.
+- exclusiveGateway models an XOR split/join; parallelGateway models an AND split/join.
+- There is no inclusive/OR gateway: if a step can lead to one or more of several paths, model it explicitly with exclusiveGateway and/or parallelGateway.
 - Every split (a point where the flow diverges into multiple paths) MUST go through an explicit gateway. A task or event must NEVER have more than one outgoing flow - place a gateway there and make clear whether it is exclusive (XOR) or parallel (AND).
 - Every join (a point where multiple paths converge) MUST go through an explicit gateway. A task or event must NEVER have more than one incoming flow - place a gateway there and make clear whether it is exclusive (XOR) or parallel (AND).
 - REJOIN PATTERN: whenever a gateway splits the flow, every branch must merge back together at a matching join gateway of the SAME type before continuing. This includes the common "optional step" case - e.g. an exclusiveGateway "Documents needed?" with branches [request docs -> assess] and [assess directly]: both branches must meet at ONE exclusiveGateway whose single outgoing flow goes to "Assess", they must NOT both point at "Assess" directly. A parallelGateway split must likewise be closed by a parallelGateway join.
@@ -54,7 +37,7 @@ Gateways (Splitting/Joining Points):
 Flows:
 - Sequence Flows: Detail all sequence flows, explaining how tasks and events are interconnected. 
 - Each element must have exactly two sequence flows (in and out), except start and end events, which have only one.
-- All flows must use "sequenceFlow" type and have unique IDs.
+- All flows must have unique IDs.
 
 NAMING (KEEP LABELS SHORT):
 - Every "name" must be a concise label, NOT a sentence: a short verb-object phrase (e.g. "Ship order", "Check stock", "Approve request").
@@ -62,50 +45,18 @@ NAMING (KEEP LABELS SHORT):
 - The names are rendered as diagram labels below each node; long names overflow and overlap, making the diagram unreadable.
 
 VALIDATION CHECKLIST:
-✅ Exactly one startEvent with type "startEvent"
-✅ Exactly one endEvent with type "endEvent"  
-✅ All task types are lowercase: "userTask", "serviceTask", "task"
-✅ All gateway types are camelCase: "exclusiveGateway", "parallelGateway"
-✅ All flow types are "sequenceFlow"
-✅ All flows have unique IDs and valid source/target references
-✅ Every element (except start/end) has both incoming and outgoing flows
+- Exactly one startEvent with type "startEvent"
+- Exactly one endEvent with type "endEvent"  
+- All flows have unique IDs and valid source/target references
+- Every element (except start/end) has both incoming and outgoing flows
 
 FAILURE EXAMPLES TO AVOID:
-❌ "intermediateCatchEvent" → causes "Unknown exception: flow5" errors
-❌ "StartEvent" → causes parsing failures
-❌ Multiple endEvents → causes flow reference errors
-❌ Missing flows → causes incomplete transformations
+- Multiple endEvents → causes flow reference errors
+- Missing flows → causes incomplete transformations
 
-Only return the JSON text – avoid markdown formatting or code blocks.
-Remember: This will be automatically processed by a strict BPMN 2.0 transformer. Any deviation from these exact specifications will cause transformation failures.
-
-EXAMPLE OUTPUT FORMAT AND MANDATORY JSON STRUCTURE:
-
-{
-  "events": [
-    {"id": "startEvent1", "type": "startEvent", "name": "Process Started"},
-    {"id": "endEvent1", "type": "endEvent", "name": "Process Completed"}
-  ],
-  "tasks": [
-    {"id": "task1", "type": "userTask", "name": "Human Task"},
-    {"id": "task2", "type": "serviceTask", "name": "System Task"}
-  ],
-  "gateways": [
-    {"id": "gateway1", "type": "exclusiveGateway", "name": "Decision Point"}
-  ],
-  "flows": [
-    {"id": "flow1", "type": "sequenceFlow", "source": "startEvent1", "target": "task1"},
-    {"id": "flow2", "type": "sequenceFlow", "source": "task1", "target": "gateway1"},
-    {"id": "flow3", "type": "sequenceFlow", "source": "gateway1", "target": "task2"},
-    {"id": "flow4", "type": "sequenceFlow", "source": "task2", "target": "endEvent1"}
-  ]
-}
-
-This should also be the output from the LLM call. Beginning with { and ending with }.
+Remember: This will be automatically processed by a strict BPMN 2.0 transformer. Any deviation from these structural specifications will cause transformation failures.
 
 IMPORTANT REMINDERS:
-- Return ONLY the JSON object without any markdown formatting
-- Ensure all element types use exact lowercase/camelCase as shown above
 - Every process must have exactly ONE startEvent and ONE endEvent
 - All gateway splits must have corresponding joins
 - Each element needs proper incoming/outgoing flow connections       
