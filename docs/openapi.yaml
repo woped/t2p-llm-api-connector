@@ -12,8 +12,11 @@ info:
   contact:
     name: API Support
 servers:
-  - url: http://localhost:5000
-    description: Local development server
+  # Relative URL so Swagger UI targets whatever host/port the docs page was
+  # loaded from. A hard-coded http://localhost:5000 here meant requests always
+  # went to 5000 even when the app was started on another port.
+  - url: /
+    description: Same origin as this documentation page
 
 paths:
   /generate:
