@@ -1,3 +1,4 @@
+import time
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -349,6 +350,66 @@ class TestV2Api(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json()["error"]["code"], "invalid_request")
+
+    # --- internal async submit/poll --------------------------------------
+    def _poll_until_terminal(self, job_id, timeout=5.0):
+        """Poll the status endpoint until the background worker finishes."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            resp = self.client.get(f"/internal/jobs/{job_id}")
+            self.assertEqual(resp.status_code, 200)
+            payload = resp.get_json()
+            if payload["status"] in ("succeeded", "failed"):
+                return payload
+            time.sleep(0.02)
+        self.fail(f"job {job_id} did not reach a terminal state within {timeout}s")
+
+    @patch("app.validation.VALIDATORS", [])
+    @patch("app.api.routes._llm_service")
+    def test_async_submit_then_poll_returns_result(self, mock_service):
+        # This is the path t2p-2.0 normally drives: submit returns a job id
+        # immediately (202), the generation runs in a background worker, and
+        # polling eventually yields the same body the sync endpoint would have.
+        mock_service.generate.return_value = '{"events": [], "tasks": []}'
+
+        submit = self.client.post(
+            "/internal/jobs/generate",
+            headers={"Authorization": "Bearer secret-token"},
+            json={"user_text": "x", "provider": "openai", "model": "gpt-4o"},
+        )
+        self.assertEqual(submit.status_code, 202)
+        body = submit.get_json()
+        self.assertTrue(body["job_id"])
+        self.assertEqual(body["status"], "queued")
+        self.assertEqual(body["status_url"], f"/internal/jobs/{body['job_id']}")
+
+        payload = self._poll_until_terminal(body["job_id"])
+        self.assertEqual(payload["status"], "succeeded")
+        # The async result preserves the sync contract: {"raw_response": <model>}.
+        self.assertEqual(
+            payload["result"], {"raw_response": '{"events": [], "tasks": []}'}
+        )
+
+    @patch("app.api.routes._llm_service")
+    def test_async_submit_rejects_invalid_request_synchronously(self, mock_service):
+        # Pre-generation validation runs on the submit request itself, so a
+        # malformed request gets an immediate 4xx instead of a queued job that
+        # only fails later on poll. No generation is attempted.
+        response = self.client.post(
+            "/internal/jobs/generate",
+            headers={"Authorization": "Bearer secret-token"},
+            json={"provider": "openai", "model": "gpt-4o"},  # no user_text
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"]["code"], "invalid_request")
+        mock_service.generate.assert_not_called()
+
+    def test_async_poll_unknown_job_is_404(self):
+        # An unknown (or expired) job id is reported as not_found, never a 200
+        # with an empty body that a poller could misread as "still running".
+        response = self.client.get("/internal/jobs/does-not-exist")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.get_json()["error"]["code"], "not_found")
 
 
 if __name__ == "__main__":

@@ -38,8 +38,8 @@ class _InMemoryRedis:
         self._lock = threading.Lock()
         self._store = {}
 
-    def setex(self, key, ttl, value):
-        expires_at = time.time() + float(ttl)
+    def set(self, key, value, ex=None):
+        expires_at = time.time() + float(ex)
         with self._lock:
             self._store[key] = (value, expires_at)
 
@@ -106,7 +106,7 @@ class AsyncJobStore:
             "result": None,
             "error": None,
         }
-        self._redis.setex(self._key(job_id), self._ttl, json.dumps(payload))
+        self._redis.set(self._key(job_id), json.dumps(payload), ex=self._ttl)
         return job_id
 
     def get(self, job_id):
@@ -127,5 +127,5 @@ class AsyncJobStore:
         if error is not None:
             payload["error"] = error
 
-        self._redis.setex(self._key(job_id), self._ttl, json.dumps(payload))
+        self._redis.set(self._key(job_id), json.dumps(payload), ex=self._ttl)
         return True
