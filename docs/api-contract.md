@@ -56,5 +56,16 @@ validation-exhaustion message above when all attempts produced invalid models.
 ## `GET /models`
 
 ```
-Response 200: { "models": [{ "provider": string, "model": string }] }
+Response 200: {
+  "models": [{
+    "provider": string,
+    "model": string,
+    "supports_temperature": boolean,
+    "pricing": { "input": number, "output": number, "cached_input"?: number }
+  }]
+}
 ```
+
+`pricing` is USD per 1,000,000 tokens. `cached_input` appears only for models
+that offer a reduced cached-input rate. `supports_temperature` is `false` for
+reasoning models (GPT-5.x / o-series) that reject the `temperature` parameter.

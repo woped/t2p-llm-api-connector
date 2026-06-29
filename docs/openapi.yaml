@@ -146,6 +146,27 @@ components:
               model:
                 type: string
                 example: gpt-5.4-mini
+              supports_temperature:
+                type: boolean
+                description: >-
+                  Whether the model accepts a `temperature` (sampling) parameter.
+                  Reasoning models (GPT-5.x / o-series) reject it.
+                example: false
+              pricing:
+                type: object
+                description: >-
+                  Token pricing in USD per 1,000,000 tokens. `cached_input` is
+                  present only for models that offer a reduced cached-input rate.
+                properties:
+                  input:
+                    type: number
+                    example: 0.75
+                  cached_input:
+                    type: number
+                    example: 0.075
+                  output:
+                    type: number
+                    example: 4.50
 
     Error:
       type: object

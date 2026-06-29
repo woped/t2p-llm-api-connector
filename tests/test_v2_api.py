@@ -51,9 +51,21 @@ class TestV2Api(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertIn("models", data)
-        pairs = {(m["provider"], m["model"]) for m in data["models"]}
-        self.assertIn(("openai", "gpt-4o"), pairs)
-        self.assertIn(("gemini", "gemini-3.5-flash"), pairs)
+        by_pair = {(m["provider"], m["model"]): m for m in data["models"]}
+        self.assertIn(("openai", "gpt-4o"), by_pair)
+        self.assertIn(("gemini", "gemini-3.5-flash"), by_pair)
+
+        # Each model advertises its full registry metadata: parameter support
+        # and pricing (USD per 1M tokens), so a client need not look it up.
+        mini = by_pair[("openai", "gpt-5.4-mini")]
+        self.assertFalse(mini["supports_temperature"])
+        self.assertEqual(
+            mini["pricing"], {"input": 0.75, "cached_input": 0.075, "output": 4.50}
+        )
+        # Gemini models accept temperature and have no cached-input rate.
+        flash = by_pair[("gemini", "gemini-3.5-flash")]
+        self.assertTrue(flash["supports_temperature"])
+        self.assertNotIn("cached_input", flash["pricing"])
 
     # --- cost estimation --------------------------------------------------
     def test_estimate_cost_uses_registry_pricing(self):

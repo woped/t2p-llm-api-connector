@@ -78,13 +78,24 @@ _DISPATCH = {
 def list_models():
     """Return the advertised models as a flat list of dicts.
 
-    Shape (matches the connector contract / openapi.yaml):
-    ``[{"provider": str, "model": str}, ...]``
+    Shape (matches the connector contract / openapi.yaml)::
+
+        [{"provider": str, "model": str,
+          "supports_temperature": bool,
+          "pricing": {"input": float, "output": float,
+                      "cached_input": float?}}, ...]
+
+    Each model carries its full registry metadata so a client can show pricing
+    and parameter support without a second lookup. ``provider``/``model`` always
+    come first; the remaining capability keys are spread from the registry entry,
+    so any future metadata is advertised automatically. ``pricing`` is USD per
+    1,000,000 tokens and ``cached_input`` is present only where a model offers a
+    reduced cached-input rate.
     """
     return [
-        {"provider": provider, "model": model}
+        {"provider": provider, "model": model, **meta}
         for provider, models in _REGISTRY.items()
-        for model in models
+        for model, meta in models.items()
     ]
 
 
