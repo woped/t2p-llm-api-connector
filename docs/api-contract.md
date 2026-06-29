@@ -31,12 +31,12 @@ Body: {
   "prompting_strategy": string  (optional, "few_shot" | "zero_shot"; default "few_shot")
 }
 Response 200: { "raw_response": string }
-Response 400: { "error": { "code": string, "message": string } }
-Response 401: { "error": { "code": string, "message": string } }
-Response 422: { "error": { "code": string, "message": string, "details": [string] } }
-Response 429: { "error": { "code": string, "message": string } }
-Response 502: { "error": { "code": string, "message": string } }
-Response 500: { "error": { "code": string, "message": string } }
+Response 400: { "error": { "code": string, "message": string, "request_id": string } }
+Response 401: { "error": { "code": string, "message": string, "request_id": string } }
+Response 422: { "error": { "code": string, "message": string, "request_id": string, "details": [string] } }
+Response 429: { "error": { "code": string, "message": string, "request_id": string } }
+Response 502: { "error": { "code": string, "message": string, "request_id": string } }
+Response 500: { "error": { "code": string, "message": string, "request_id": string } }
 ```
 
 The provider API key is supplied in the `Authorization` header. The connector builds the
@@ -52,8 +52,9 @@ for logs/developers, not for direct display to end users).
 
 ## Error reference
 
-Every error response uses the body `{ "error": { "code", "message", "details"? } }`.
-`code` is the stable identifier to branch on; `message` is human-readable; `details`
+Every error response uses the body `{ "error": { "code", "message", "request_id", "details"? } }`.
+`code` is the stable identifier to branch on; `message` is human-readable; `request_id`
+(string) is always present and correlates the response with the server logs; `details`
 (array of strings) appears only where noted. t2p-2.0 relays the 4xx rows verbatim
 (status + body) and maps the 5xx rows to its own `upstream_error`/`internal_error`.
 

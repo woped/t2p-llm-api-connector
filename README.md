@@ -1,6 +1,6 @@
 ﻿# llm-api-connector
 
-HTTP connector service that proxies process-description text to LLM providers (OpenAI, Google Gemini) and returns the raw model response. Consumed by the t2p-2.0 backend.
+HTTP connector service that turns process-description text into a structured BPMN-JSON process model via an LLM provider (OpenAI, Google Gemini). It enforces structured output, validates the result against workflow-net rules, and regenerates on failure before returning the raw model response. Consumed by the t2p-2.0 backend.
 
 ## Prerequisites
 
@@ -56,6 +56,21 @@ Example request body for `POST /generate`:
   "prompting_strategy": "few_shot"
 }
 ```
+
+### Structured output and validation
+
+The connector does not blindly forward the model's reply. Both providers are
+constrained to a shared Pydantic schema (`app/schemas.py`) for structured output,
+so the response is always valid JSON with the expected element/flow types. The
+parsed model is then checked by the validators in `app/validation.py` — eight pure,
+non-mutating `(model) -> list[str]` checks (single start/end, connectivity, explicit
+splits/joins, unique ids, …) enforcing what a sound WoPeD workflow net requires.
+
+If validation fails, `POST /generate` retries: it regenerates up to 3 times total,
+raising the temperature and feeding the previous attempt's concrete problems back to
+the model so it repairs that exact model rather than diverging. The first response
+that passes is returned in `raw_response`. If every attempt still fails, the request
+returns `422 model_unprocessable` with the last attempt's problems in `details`.
 
 ### Supported models
 

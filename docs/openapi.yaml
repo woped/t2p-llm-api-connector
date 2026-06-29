@@ -193,6 +193,12 @@ components:
                 user-facing summary; for a 502 `upstream_error` it is the raw error
                 text returned by the LLM provider.
               example: "Missing or empty field(s): provider."
+            request_id:
+              type: string
+              description: >-
+                Always present. Correlates the error with the server logs (echoes
+                the request's id).
+              example: "b3f1c2a49d7e4f0a8c1b2e6d5a4b3c2d"
             details:
               type: array
               items:
