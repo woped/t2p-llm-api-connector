@@ -1,12 +1,14 @@
 import json
 import logging
+import threading
 import time
 from app import log_utils
 from app.api import bp
+from app.services.async_jobs import AsyncJobStore
 from app.services.llm_service import LLMService, ProviderError
 from app.services import model_registry
 from app.validation import validate_model, ValidationError
-from app.request_id import get_request_id
+from app.request_id import get_request_id, set_request_id
 from flask import request, jsonify, current_app
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
@@ -222,6 +224,140 @@ def _extract_bearer_key():
     return None
 
 
+def _validate_request(api_key, data):
+    """Pre-generation validation shared by the sync and async paths.
+
+    Returns a normalized error dict ``{http_status, code, message, details}`` on
+    rejection, or ``None`` when the request is well-formed. Request-free: it
+    takes the already-extracted key and parsed body so the async worker (which
+    runs without a request context) can reuse it.
+    """
+    if api_key is None:
+        return {
+            "http_status": 401,
+            "code": "unauthorized",
+            "message": "Missing or malformed Authorization header.",
+            "details": None,
+        }
+    if not isinstance(data, dict):
+        return {
+            "http_status": 400,
+            "code": "invalid_request",
+            "message": "Request body must be JSON.",
+            "details": None,
+        }
+    missing = [f for f in ("user_text", "provider", "model") if not data.get(f)]
+    if missing:
+        # Log what actually arrived so a malformed client request is diagnosable
+        # from the server logs (this happens before any LLM call or retry).
+        logger.warning(
+            "/generate rejected (invalid_request): missing/empty %s; "
+            "body keys received: %s",
+            missing,
+            sorted(data.keys()),
+        )
+        return {
+            "http_status": 400,
+            "code": "invalid_request",
+            "message": f"Missing or empty field(s): {', '.join(missing)}.",
+            "details": None,
+        }
+    if not model_registry.is_valid(data["provider"], data["model"]):
+        return {
+            "http_status": 400,
+            "code": "invalid_provider",
+            "message": f"Unknown provider/model: {data['provider']}/{data['model']}.",
+            "details": None,
+        }
+    return None
+
+
+def _generate_only(api_key, data):
+    """Run the validated generation (assumes the request already passed
+    ``_validate_request``).
+
+    Returns ``(result, error)`` with exactly one set: ``result =
+    {"raw_response": str}`` on success, else a normalized error dict. Request-free
+    so the async worker can reuse it.
+    """
+    provider = data["provider"]
+    model = data["model"]
+    logger.info("Invoking LLMService.generate (provider=%s, model=%s)", provider, model)
+    try:
+        raw_response = _generate_validated(
+            api_key=api_key,
+            provider=provider,
+            model=model,
+            user_text=data["user_text"],
+            system_prompt=current_app.config["SYSTEM_PROMPT"],
+            prompting_strategy=data.get("prompting_strategy", "few_shot"),
+        )
+    except ValidationError as e:
+        # The provider answered, but no attempt produced a valid workflow net.
+        # Unprocessable *input* -> 422 (client-actionable: rephrase), with the
+        # concrete validator problems in ``details`` for diagnostics.
+        return None, {
+            "http_status": 422,
+            "code": "model_unprocessable",
+            "message": (
+                "Could not generate a valid process model from the description "
+                f"after {_MAX_GENERATION_ATTEMPTS} attempts. The description may "
+                "be too ambiguous or describe a flow that cannot be expressed as "
+                "a sound workflow net (e.g. branches or merges without a gateway, "
+                "or more than one possible ending). Try rephrasing or "
+                "simplifying it."
+            ),
+            "details": list(e.issues),
+        }
+    except ProviderError as e:
+        # Upstream provider rejected/failed. Mirror its status (429 retryable,
+        # else bad-gateway). Traceback already logged in the service layer.
+        http_status = 429 if e.upstream_status == 429 else 502
+        return None, {
+            "http_status": http_status,
+            "code": "upstream_error",
+            "message": str(e),
+            "details": None,
+        }
+    return {"raw_response": raw_response}, None
+
+
+def _job_store():
+    return AsyncJobStore(
+        redis_url=current_app.config["REDIS_URL"],
+        ttl_seconds=current_app.config.get("ASYNC_JOB_TTL_SECONDS", 3600),
+        use_mock=current_app.config.get("REDIS_USE_MOCK", False),
+    )
+
+
+def _run_async_generate(app, job_id, request_id, api_key, data):
+    """Background worker: run the generation and record the outcome in the job
+    store. Runs outside any request context, so it re-binds the correlation id
+    and uses the request-free ``_generate_only``.
+    """
+    with app.app_context():
+        set_request_id(request_id)
+        store = _job_store()
+        store.update_status(job_id, "running")
+        try:
+            result, error = _generate_only(api_key, data)
+        except Exception as e:  # never let a worker thread die silently
+            logger.exception("Async generation crashed: %s", e)
+            result, error = (
+                None,
+                {
+                    "http_status": 500,
+                    "code": "internal_error",
+                    "message": "An unexpected error occurred.",
+                    "details": None,
+                },
+            )
+        if error is not None:
+            store.update_status(job_id, "failed", error=error)
+        else:
+            store.update_status(job_id, "succeeded", result=result)
+
+
 @bp.route("/generate", methods=["POST"])
 def generate():
     """Generate a structured BPMN-JSON process model from a description.
@@ -229,92 +365,28 @@ def generate():
     Provider/model are validated against the registry; the API key is taken
     from the Authorization header (never from the body). Returns
     ``{"raw_response": <string>}`` on success.
+
+    This synchronous endpoint is kept as the stable contract and as the async
+    fallback; t2p-2.0 normally drives generation through the internal async
+    submit/poll endpoints below.
     """
     start_time = time.time()
     status = "200"
     try:
         api_key = _extract_bearer_key()
-        if api_key is None:
-            status = "401"
-            return _v2_error(
-                401, "unauthorized", "Missing or malformed Authorization header."
-            )
-
         data = request.get_json(silent=True)
-        if not isinstance(data, dict):
-            status = "400"
-            return _v2_error(400, "invalid_request", "Request body must be JSON.")
-
-        missing = [f for f in ("user_text", "provider", "model") if not data.get(f)]
-        if missing:
-            status = "400"
-            # Log what actually arrived so a malformed client request is
-            # diagnosable from the server logs: this rejection happens before any
-            # LLM call or retry, so an empty/wrong-shaped body lands here, not in
-            # the generation loop.
-            logger.warning(
-                "/generate rejected (invalid_request): missing/empty %s; "
-                "body keys received: %s",
-                missing,
-                sorted(data.keys()),
-            )
+        error = _validate_request(api_key, data)
+        if error is None:
+            result, error = _generate_only(api_key, data)
+        if error is not None:
+            status = str(error["http_status"])
             return _v2_error(
-                400,
-                "invalid_request",
-                f"Missing or empty field(s): {', '.join(missing)}.",
+                error["http_status"],
+                error["code"],
+                error["message"],
+                error.get("details"),
             )
-
-        provider = data["provider"]
-        model = data["model"]
-        if not model_registry.is_valid(provider, model):
-            status = "400"
-            return _v2_error(
-                400,
-                "invalid_provider",
-                f"Unknown provider/model: {provider}/{model}.",
-            )
-
-        logger.info(
-            "Invoking LLMService.generate (provider=%s, model=%s)", provider, model
-        )
-        try:
-            raw_response = _generate_validated(
-                api_key=api_key,
-                provider=provider,
-                model=model,
-                user_text=data["user_text"],
-                system_prompt=current_app.config["SYSTEM_PROMPT"],
-                prompting_strategy=data.get("prompting_strategy", "few_shot"),
-            )
-        except ValidationError as e:
-            # Not an upstream failure: the provider answered, but no attempt
-            # produced a valid workflow net. That is unprocessable *input*, so it
-            # is a 422 (client-actionable: rephrase) rather than a 5xx. The
-            # friendly message is for the end user; the concrete, repair-oriented
-            # validator problems ride along in ``details`` for diagnostics.
-            status = "422"
-            return _v2_error(
-                422,
-                "model_unprocessable",
-                "Could not generate a valid process model from the description "
-                f"after {_MAX_GENERATION_ATTEMPTS} attempts. The description may "
-                "be too ambiguous or describe a flow that cannot be expressed as "
-                "a sound workflow net (e.g. branches or merges without a gateway, "
-                "or more than one possible ending). Try rephrasing or "
-                "simplifying it.",
-                details=e.issues,
-            )
-        return jsonify({"raw_response": raw_response}), 200
-
-    except ProviderError as e:
-        # The upstream provider (OpenAI / Google) rejected or failed the call.
-        # Forward its real error text and mirror the upstream status so the
-        # calling service can debug and react (429 is retryable; otherwise it is
-        # a bad-gateway condition). The traceback is already logged in the
-        # service layer.
-        http_status = 429 if e.upstream_status == 429 else 502
-        status = str(http_status)
-        return _v2_error(http_status, "upstream_error", str(e))
+        return jsonify(result), 200
     except Exception as e:
         status = "500"
         logger.exception("/generate failed: %s", e)
@@ -324,6 +396,82 @@ def generate():
         REQUEST_LATENCY.labels(method="POST", endpoint="/generate").observe(
             time.time() - start_time
         )
+
+
+@bp.route("/internal/jobs/generate", methods=["POST"])
+def internal_generate_submit():
+    """Async submit: validate, enqueue a background generation, return a job id.
+
+    Used by t2p-2.0 so the long, multi-attempt generation is not held open on a
+    single HTTP request (the connection that would otherwise hit the gunicorn
+    worker timeout). Pre-generation validation runs synchronously, so malformed
+    requests still get an immediate 4xx instead of a queued job.
+    """
+    if not current_app.config.get("INTERNAL_ASYNC_ENABLED", True):
+        return _v2_error(404, "not_found", "Internal async endpoint is disabled.")
+
+    api_key = _extract_bearer_key()
+    data = request.get_json(silent=True)
+    error = _validate_request(api_key, data)
+    if error is not None:
+        return _v2_error(
+            error["http_status"], error["code"], error["message"], error.get("details")
+        )
+
+    store = _job_store()
+    job_id = store.create()
+    worker = threading.Thread(
+        target=_run_async_generate,
+        args=(
+            current_app._get_current_object(),
+            job_id,
+            get_request_id(),
+            api_key,
+            data,
+        ),
+        daemon=True,
+    )
+    worker.start()
+    return (
+        jsonify(
+            {
+                "job_id": job_id,
+                "status": "queued",
+                "status_url": f"/internal/jobs/{job_id}",
+            }
+        ),
+        202,
+    )
+
+
+@bp.route("/internal/jobs/<job_id>", methods=["GET"])
+def internal_generate_status(job_id):
+    """Async status: return the job's terminal result/error, or its progress.
+
+    The stored ``error`` keeps the same ``{http_status, code, message, details}``
+    shape the sync endpoint would have returned, so t2p-2.0 can preserve the
+    original 4xx semantics (e.g. 422 model_unprocessable) instead of collapsing
+    every async failure to a generic 5xx.
+    """
+    if not current_app.config.get("INTERNAL_ASYNC_ENABLED", True):
+        return _v2_error(404, "not_found", "Internal async endpoint is disabled.")
+
+    store = _job_store()
+    payload = store.get(job_id)
+    if payload is None:
+        return _v2_error(404, "not_found", "Unknown or expired job id.")
+
+    response = {
+        "job_id": payload["job_id"],
+        "status": payload["status"],
+        "created_at": payload["created_at"],
+        "updated_at": payload["updated_at"],
+    }
+    if payload.get("result") is not None:
+        response["result"] = payload["result"]
+    if payload.get("error") is not None:
+        response["error"] = payload["error"]
+    return jsonify(response), 200
 
 
 @bp.route("/models", methods=["GET"])
