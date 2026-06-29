@@ -71,7 +71,9 @@ def _log_total_token_usage(usage_records, provider, model):
     # ones. ``cost`` is the actual (cache-discounted) figure; ``cost_full`` the
     # hypothetical no-cache figure, so the saving can be shown for comparison.
     costs = [u["cost"] for u in usage_records if u.get("cost") is not None]
-    costs_full = [u["cost_full"] for u in usage_records if u.get("cost_full") is not None]
+    costs_full = [
+        u["cost_full"] for u in usage_records if u.get("cost_full") is not None
+    ]
     actual = sum(costs) if costs else None
     full = sum(costs_full) if costs_full else None
     cost_str = log_utils.format_cost(actual, full, cached, compare=True)
@@ -117,6 +119,7 @@ def _generate_validated(**generate_kwargs):
     usage_out = []
     feedback = None
     previous_model = None
+    last_issues = []
     try:
         for attempt in range(1, _MAX_GENERATION_ATTEMPTS + 1):
             # Deterministic first attempt; regenerations use a small non-zero
@@ -160,6 +163,7 @@ def _generate_validated(**generate_kwargs):
                 return raw_response
             except ValidationError as e:
                 feedback = str(e)
+                last_issues = e.issues
                 previous_model = raw_response
                 if attempt < _MAX_GENERATION_ATTEMPTS:
                     logger.warning(
@@ -177,7 +181,7 @@ def _generate_validated(**generate_kwargs):
                         _MAX_GENERATION_ATTEMPTS,
                         _format_issues(e.issues),
                     )
-        raise ValidationError(feedback)
+        raise ValidationError(last_issues)
     finally:
         _log_total_token_usage(usage_out, provider, model_name)
 
@@ -191,9 +195,18 @@ def _generate_validated(**generate_kwargs):
 # can relay 4xx client errors unchanged.
 
 
-def _v2_error(status_code, code, message):
-    """Build the standard connector error body and status tuple."""
-    return jsonify({"error": {"code": code, "message": message}}), status_code
+def _v2_error(status_code, code, message, details=None):
+    """Build the standard connector error body and status tuple.
+
+    ``details`` (optional) is a list of structured, machine-readable specifics
+    for errors that carry them — e.g. the individual validation problems behind
+    a ``model_unprocessable``. It is omitted from the body when not provided, so
+    simple errors stay a flat ``{code, message}``.
+    """
+    error = {"code": code, "message": message}
+    if details:
+        error["details"] = list(details)
+    return jsonify({"error": error}), status_code
 
 
 def _extract_bearer_key():
@@ -273,12 +286,22 @@ def generate():
                 prompting_strategy=data.get("prompting_strategy", "few_shot"),
             )
         except ValidationError as e:
-            status = "502"
+            # Not an upstream failure: the provider answered, but no attempt
+            # produced a valid workflow net. That is unprocessable *input*, so it
+            # is a 422 (client-actionable: rephrase) rather than a 5xx. The
+            # friendly message is for the end user; the concrete, repair-oriented
+            # validator problems ride along in ``details`` for diagnostics.
+            status = "422"
             return _v2_error(
-                502,
-                "upstream_error",
-                f"Could not generate a valid model after {_MAX_GENERATION_ATTEMPTS} "
-                f"attempts. Last validation problems: {e}",
+                422,
+                "model_unprocessable",
+                "Could not generate a valid process model from the description "
+                f"after {_MAX_GENERATION_ATTEMPTS} attempts. The description may "
+                "be too ambiguous or describe a flow that cannot be expressed as "
+                "a sound workflow net (e.g. branches or merges without a gateway, "
+                "or more than one possible ending). Try rephrasing or "
+                "simplifying it.",
+                details=e.issues,
             )
         return jsonify({"raw_response": raw_response}), 200
 

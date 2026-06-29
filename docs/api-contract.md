@@ -33,6 +33,7 @@ Body: {
 Response 200: { "raw_response": string }
 Response 400: { "error": { "code": string, "message": string } }
 Response 401: { "error": { "code": string, "message": string } }
+Response 422: { "error": { "code": string, "message": string, "details": [string] } }
 Response 429: { "error": { "code": string, "message": string } }
 Response 502: { "error": { "code": string, "message": string } }
 Response 500: { "error": { "code": string, "message": string } }
@@ -42,16 +43,31 @@ The provider API key is supplied in the `Authorization` header. The connector bu
 prompt, dispatches the call to the selected `provider`/`model`, validates the generated
 model against its own validators, and returns the raw provider response. If validation
 fails, the connector retries (up to 3 attempts total, raising the temperature on retries);
-if every attempt fails validation it returns `502 upstream_error` with a generic message
-(`"Could not generate a valid model. Please try again."`).
+if every attempt still fails validation it returns `422 model_unprocessable`. This is a
+client-actionable condition (the provider answered, but the description could not be turned
+into a sound workflow net — rephrase or simplify), not an upstream failure, hence 4xx not
+5xx. The `message` is a friendly, user-facing summary; the `details` array carries the last
+attempt's concrete validation problems for diagnostics (these are repair-oriented and meant
+for logs/developers, not for direct display to end users).
 
-Error codes: `invalid_request`, `invalid_provider` (400); `unauthorized` (401);
-`upstream_error` (429 retryable / 502 bad gateway). For a 502 the `message` carries the
-provider's own error text when the provider failed, or the generic
-validation-exhaustion message above when all attempts produced invalid models.
-`internal_error` (500). A missing or malformed `Authorization` header returns
-`401 unauthorized`; a non-JSON body or a missing/empty required field returns
-`400 invalid_request`.
+## Error reference
+
+Every error response uses the body `{ "error": { "code", "message", "details"? } }`.
+`code` is the stable identifier to branch on; `message` is human-readable; `details`
+(array of strings) appears only where noted. t2p-2.0 relays the 4xx rows verbatim
+(status + body) and maps the 5xx rows to its own `upstream_error`/`internal_error`.
+
+| HTTP | `code` | Meaning | How to fix |
+|------|--------|---------|------------|
+| 400 | `invalid_request` | Body is not JSON, or a required field (`user_text` / `provider` / `model`) is missing or empty. | Send a JSON body with all three required fields populated. |
+| 400 | `invalid_provider` | The `provider`/`model` pair is not in the registry. | Pick a pair returned by `GET /models`. |
+| 401 | `unauthorized` | `Authorization` header missing or not a well-formed `Bearer <key>`. | Send `Authorization: Bearer <api_key>`. |
+| 422 | `model_unprocessable` | The provider answered, but no attempt (3 total) produced a valid workflow net. `details` lists the concrete validation problems. | Rephrase or simplify the description — avoid splits/joins without a clear gateway, more than one ending, or "cancel at any point". Not retryable unchanged. |
+| 429 | `upstream_error` | The provider rate-limited the call; `message` carries the provider's text. | Back off and retry. |
+| 502 | `upstream_error` | The provider failed or returned an unusable/incomplete response; `message` carries the provider's text. | Transient upstream failure — retry later. |
+| 500 | `internal_error` | Unexpected connector fault. | Not caller-fixable; inspect connector logs / report. |
+
+`GET /models` returns `200`, or `500 internal_error` on an unexpected failure.
 
 ## `GET /models`
 

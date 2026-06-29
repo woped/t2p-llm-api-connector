@@ -46,6 +46,8 @@ paths:
           $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
         '429':
           $ref: '#/components/responses/Error'
         '502':
@@ -178,13 +180,25 @@ components:
               type: string
               description: >-
                 Stable identifier. Known values: `invalid_request`,
-                `invalid_provider` (400); `unauthorized` (401); `upstream_error`
-                (429 retryable / 502 bad gateway — the `message` carries the
-                provider's own error text); `internal_error` (500).
+                `invalid_provider` (400); `unauthorized` (401);
+                `model_unprocessable` (422 — every generation attempt failed
+                validation; carries `details`); `upstream_error` (429 retryable /
+                502 bad gateway — the `message` carries the provider's own error
+                text); `internal_error` (500).
               example: invalid_request
             message:
               type: string
               description: >-
-                Human-readable detail. For `upstream_error` this is the raw
-                error text returned by the LLM provider.
+                Human-readable detail. For `model_unprocessable` it is a friendly,
+                user-facing summary; for a 502 `upstream_error` it is the raw error
+                text returned by the LLM provider.
               example: "Missing or empty field(s): provider."
+            details:
+              type: array
+              items:
+                type: string
+              description: >-
+                Optional structured specifics. Present for `model_unprocessable`,
+                where it lists the last attempt's concrete validation problems
+                (repair-oriented, intended for logs/diagnostics rather than direct
+                display to end users).

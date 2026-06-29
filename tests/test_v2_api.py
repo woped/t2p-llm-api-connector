@@ -72,7 +72,9 @@ class TestV2Api(unittest.TestCase):
         from app.services import model_registry
 
         # gpt-5.4-mini: input $0.75/1M, output $4.50/1M.
-        cost = model_registry.estimate_cost("openai", "gpt-5.4-mini", 1_000_000, 1_000_000)
+        cost = model_registry.estimate_cost(
+            "openai", "gpt-5.4-mini", 1_000_000, 1_000_000
+        )
         self.assertAlmostEqual(cost, 0.75 + 4.50)
 
     def test_estimate_cost_discounts_cached_input(self):
@@ -138,12 +140,16 @@ class TestV2Api(unittest.TestCase):
             headers={"Authorization": "Bearer secret-token"},
             json={"user_text": "x", "provider": "openai", "model": "gpt-4o"},
         )
-        self.assertEqual(response.status_code, 502)
+        # Unprocessable input (the provider answered but no attempt was valid),
+        # not an upstream failure -> 422, not 502.
+        self.assertEqual(response.status_code, 422)
         # Three attempts total: one initial call plus two retries.
         self.assertEqual(mock_service.generate.call_count, 3)
-        # The error surfaces the actual validation problem so the failure is
-        # diagnosable instead of generic.
-        self.assertIn("problem", response.get_json()["error"]["message"])
+        error = response.get_json()["error"]
+        self.assertEqual(error["code"], "model_unprocessable")
+        # The user-facing message stays friendly; the concrete validation
+        # problems ride along in ``details`` so the failure is diagnosable.
+        self.assertIn("problem", error["details"])
         # The first attempt runs blind; each retry is fed the previous attempt's
         # problems so the model can correct them.
         feedbacks = [
