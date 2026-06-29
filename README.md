@@ -103,6 +103,31 @@ docker run -p 5000:5000 llm-api-connector
 ```
 The application will be accessible at http://localhost:5000.
 
+## Release Bump Controls
+
+The CD workflow supports controlled semantic bumps using GitHub Actions repository variables:
+
+- `ALLOW_MINOR_BUMP`
+- `ALLOW_MAJOR_BUMP`
+
+Default behavior (recommended):
+
+- `ALLOW_MINOR_BUMP=false`
+- `ALLOW_MAJOR_BUMP=false`
+
+With these defaults, the pipeline always creates a patch bump (`vX.Y.Z -> vX.Y.(Z+1)`).
+
+When enabled:
+
+- If `ALLOW_MINOR_BUMP=true`, the workflow can apply a minor bump suggested by semantic-release.
+- If `ALLOW_MAJOR_BUMP=true`, the workflow can apply a major bump suggested by semantic-release.
+
+Boolean values accepted as true are: `true`, `1`, `yes`, `y`, `on` (case-insensitive). Any other value is treated as false.
+
+Configure these variables in repository settings:
+
+- GitHub -> Settings -> Secrets and variables -> Actions -> Variables -> Repository variables
+
 ## Testing
 
 Run the following commands from the **project root** (not the `tests` folder — the test suite needs to resolve the `app` package):
