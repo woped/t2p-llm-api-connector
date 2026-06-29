@@ -67,6 +67,28 @@ class TestV2Api(unittest.TestCase):
         self.assertTrue(flash["supports_temperature"])
         self.assertNotIn("cached_input", flash["pricing"])
 
+    # --- correlation id ---------------------------------------------------
+    def test_response_echoes_request_id_header(self):
+        # Every response carries an X-Request-ID, minted when none is supplied.
+        response = self.client.get("/models")
+        self.assertTrue(response.headers.get("X-Request-ID"))
+
+    def test_honours_inbound_request_id(self):
+        # A forwarded X-Request-ID (from t2p-2.0) is honoured and echoed back, so
+        # both services log the request under the same id.
+        response = self.client.get("/models", headers={"X-Request-ID": "forwarded-id"})
+        self.assertEqual(response.headers.get("X-Request-ID"), "forwarded-id")
+
+    def test_error_body_carries_matching_request_id(self):
+        # An error body's request_id matches the X-Request-ID header (here a 401
+        # from the missing Authorization header).
+        response = self.client.post(
+            "/generate", json={"user_text": "x"}, headers={"X-Request-ID": "trace-9"}
+        )
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.get_json()["error"]["request_id"], "trace-9")
+        self.assertEqual(response.headers.get("X-Request-ID"), "trace-9")
+
     # --- cost estimation --------------------------------------------------
     def test_estimate_cost_uses_registry_pricing(self):
         from app.services import model_registry

@@ -6,6 +6,7 @@ from app.api import bp
 from app.services.llm_service import LLMService, ProviderError
 from app.services import model_registry
 from app.validation import validate_model, ValidationError
+from app.request_id import get_request_id
 from flask import request, jsonify, current_app
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
@@ -203,7 +204,7 @@ def _v2_error(status_code, code, message, details=None):
     a ``model_unprocessable``. It is omitted from the body when not provided, so
     simple errors stay a flat ``{code, message}``.
     """
-    error = {"code": code, "message": message}
+    error = {"code": code, "message": message, "request_id": get_request_id()}
     if details:
         error["details"] = list(details)
     return jsonify({"error": error}), status_code

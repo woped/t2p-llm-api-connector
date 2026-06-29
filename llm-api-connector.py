@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 from app import create_app, log_utils
+from app.request_id import RequestIdFilter
 from pythonjsonlogger import jsonlogger
 
 
@@ -49,7 +50,12 @@ class ColorFormatter(logging.Formatter):
             name = f"{_DIM}{name}{_RESET}"
         else:
             level = f"{level:<8}"
-        line = f"{ts} {level} {name}  {msg}"
+        rid = getattr(record, "request_id", None)
+        rid_str = ""
+        if rid and rid != "-":
+            short = rid[:8]
+            rid_str = f" {_DIM}[{short}]{_RESET}" if self.use_color else f" [{short}]"
+        line = f"{ts} {level} {name}{rid_str}  {msg}"
         if record.exc_info:
             line += "\n" + self.formatException(record.exc_info)
         return line
@@ -137,7 +143,8 @@ def _select_console_formatter():
         return ColorFormatter(use_color=use_color)
 
     return jsonlogger.JsonFormatter(
-        "%(asctime)s %(levelname)s %(name)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+        "%(asctime)s %(levelname)s %(name)s %(request_id)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
 
@@ -157,6 +164,7 @@ def setup_logging():
 
     console_handler = logging.StreamHandler()
     console_handler.addFilter(metrics_filter)
+    console_handler.addFilter(RequestIdFilter())
     formatter = _select_console_formatter()
     console_handler.setFormatter(formatter)
     console_handler.addFilter(SeparatorFilter(isinstance(formatter, ColorFormatter)))

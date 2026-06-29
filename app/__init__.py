@@ -6,6 +6,7 @@ from config import get_config
 from flask import Flask, request, g, send_from_directory
 from flask_wtf.csrf import CSRFProtect
 from flask_swagger_ui import get_swaggerui_blueprint
+from app.request_id import REQUEST_ID_HEADER, get_request_id, set_request_id
 
 # Logging is configured once, centrally, by setup_logging() in the entrypoint
 # (llm-api-connector.py). Modules only obtain a logger — calling basicConfig here
@@ -15,7 +16,14 @@ logger = logging.getLogger(__name__)
 # Endpoints that are polled/automated rather than user-driven; they do not get a
 # request separator so the console stays focused on real /generate traffic.
 # ``str.startswith`` accepts this tuple directly.
-_QUIET_PATHS = ("/metrics", "/docs", "/openapi.yaml", "/_/_/echo", "/static", "/favicon.ico")
+_QUIET_PATHS = (
+    "/metrics",
+    "/docs",
+    "/openapi.yaml",
+    "/_/_/echo",
+    "/static",
+    "/favicon.ico",
+)
 
 
 def create_app(config_class=None):
@@ -71,6 +79,9 @@ def create_app(config_class=None):
     @app.before_request
     def _log_request_start():
         g._start_time = time.time()
+        # Bind the correlation id first so every line below (and in the view)
+        # carries it. Honours the id t2p-2.0 forwards, else mints one.
+        set_request_id(request.headers.get(REQUEST_ID_HEADER))
         # Emit a visual separator so each request's log block is easy to spot in
         # the console. Skipped for noise endpoints (health/metrics/docs/static)
         # so only meaningful requests start a new block. The separator is
@@ -81,6 +92,9 @@ def create_app(config_class=None):
 
     @app.after_request
     def _log_request_end(response):
+        # Echo the correlation id so the caller (and ultimately the end user) can
+        # quote it when reporting a failure.
+        response.headers[REQUEST_ID_HEADER] = get_request_id()
         try:
             duration = None
             if hasattr(g, "_start_time"):
