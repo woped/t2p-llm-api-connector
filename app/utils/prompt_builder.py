@@ -4,6 +4,11 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+STRICT_JSON_REMINDER = (
+    "STRICT JSON REMINDER: return exactly one valid JSON object only. "
+    "Do not use markdown fences, code blocks, explanations, or extra text."
+)
+
 
 class PromptBuilder:
     """Class for building prompts with different strategies"""
@@ -30,10 +35,13 @@ class PromptBuilder:
                 if "description" in example and "bpmn" in example
             ]
             sections.append(f"Description:\n{user_input}\n\nBPMN:\n")
-            return "\n".join(sections)
+            return STRICT_JSON_REMINDER + "\n\n" + "\n".join(sections)
 
         elif strategy == "zero_shot":
-            return f"Please generate the BPMN-JSON model for the following process description:\n\n{user_input}\n\nBPMN:"
+            return (
+                STRICT_JSON_REMINDER
+                + f"\n\nPlease generate the BPMN-JSON model for the following process description:\n\n{user_input}\n\nBPMN:"
+            )
 
         else:
             raise ValueError(f"Unsupported prompting strategy: {strategy}")
