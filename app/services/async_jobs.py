@@ -1,3 +1,16 @@
+"""Redis-backed job storage for the internal async generation workflow.
+
+The connector accepts a generation request, returns a job id immediately, and
+runs the (multi-attempt, possibly minute-long) LLM generation in a background
+thread. The job's state lives here so that the submit and the status-poll --
+which may land on different gunicorn workers -- see the same data. Redis is the
+shared store that makes that cross-worker lookup work; a process-local dict
+would be invisible to the other workers.
+
+A mock backend (fakeredis / in-memory) is used in dev/test so no real Redis is
+required there.
+"""
+
 import json
 import threading
 import time
@@ -25,8 +38,8 @@ class _InMemoryRedis:
         self._lock = threading.Lock()
         self._store = {}
 
-    def setex(self, key, ttl, value):
-        expires_at = time.time() + float(ttl)
+    def set(self, key, value, ex=None):
+        expires_at = time.time() + float(ex)
         with self._lock:
             self._store[key] = (value, expires_at)
 
@@ -77,15 +90,7 @@ class AsyncJobStore:
         if redis is None:
             raise RuntimeError("redis package is required for async job storage")
 
-        try:
-            return redis.Redis.from_url(redis_url, decode_responses=True)
-        except Exception:
-            # Local dev fallback: if explicitly enabled, continue with mock.
-            if use_mock:
-                if fakeredis is not None:
-                    return fakeredis.FakeStrictRedis(decode_responses=True)
-                return _InMemoryRedis()
-            raise
+        return redis.Redis.from_url(redis_url, decode_responses=True)
 
     def _key(self, job_id):
         return f"{self._prefix}:{job_id}"
@@ -101,7 +106,7 @@ class AsyncJobStore:
             "result": None,
             "error": None,
         }
-        self._redis.setex(self._key(job_id), self._ttl, json.dumps(payload))
+        self._redis.set(self._key(job_id), json.dumps(payload), ex=self._ttl)
         return job_id
 
     def get(self, job_id):
@@ -122,5 +127,5 @@ class AsyncJobStore:
         if error is not None:
             payload["error"] = error
 
-        self._redis.setex(self._key(job_id), self._ttl, json.dumps(payload))
+        self._redis.set(self._key(job_id), json.dumps(payload), ex=self._ttl)
         return True

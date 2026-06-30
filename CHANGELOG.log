@@ -1,3 +1,22 @@
+2026-06-29
+- Added the v2 generate contract: POST /generate (Bearer-auth provider key, body
+  {user_text, provider, model, prompting_strategy?}) returning {raw_response}, and
+  GET /models advertising the supported provider/model pairs with capability metadata.
+- Added the model registry (app/services/model_registry.py) as the single source of
+  truth for supported provider/model pairs, temperature support, pricing and dispatch.
+- Added structured output via a shared Pydantic schema (app/schemas.py): OpenAI's
+  Responses API (responses.parse, text_format) and google-genai (response_schema) are
+  both constrained to the BPMN-JSON shape and type values.
+- Added the LLM service (app/services/llm_service.py) integrating the OpenAI Responses
+  API and the google-genai SDK with per-request API-key isolation and token/cost logging.
+- Added the validation layer (app/validation.py): 8 pure, non-mutating workflow-net
+  validators (VALIDATORS) wired into a validate -> reject -> retry loop in
+  app/api/routes.py (up to 3 attempts, raising the temperature and feeding back the
+  previous attempt's problems on retry); an exhausted retry returns 422
+  model_unprocessable carrying the concrete validation problems.
+- Added Prometheus metrics at /metrics, Swagger UI at /docs, and request-id correlation
+  (included in every error body).
+
 2026-02-09
 - Added root-level version.py for service metadata and container tagging.
 - Added CHANGELOG.log for version tracking.

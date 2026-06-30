@@ -1,23 +1,26 @@
+import json
 import logging
 import threading
 import time
-
-import prometheus_client
-from flasgger import swag_from
-from flask import current_app, jsonify, request
-
+from app import log_utils
 from app.api import bp
-from app.services import model_registry
 from app.services.async_jobs import AsyncJobStore
-from app.services.llm_service import EmptyResponseError, LLMService
+from app.services.llm_service import LLMService, ProviderError
+from app.services import model_registry
+from app.validation import validate_model, ValidationError
+from app.request_id import get_request_id, set_request_id
+from flask import request, jsonify, current_app
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
+# Logging is configured centrally in the entrypoint (see app/__init__.py);
+# modules only obtain a logger here.
 logger = logging.getLogger(__name__)
 
 # Prometheus Metriken
-REQUEST_COUNT = prometheus_client.Counter(
+REQUEST_COUNT = Counter(
     "http_requests_total", "Total HTTP requests", ["method", "endpoint", "status"]
 )
-REQUEST_LATENCY = prometheus_client.Histogram(
+REQUEST_LATENCY = Histogram(
     "http_request_duration_seconds", "HTTP request latency", ["method", "endpoint"]
 )
 
@@ -26,102 +29,164 @@ REQUEST_LATENCY = prometheus_client.Histogram(
 # (the per-call provider clients are still created inside each call_* method,
 # keeping per-request API keys isolated).
 _llm_service = LLMService()
-_SUPPORTED_PROMPTING_STRATEGIES = {"zero_shot", "few_shot"}
+
+# A failed validation re-runs the whole LLM generation. Total attempts include
+# the first try, so this is one initial call plus two retries.
+_MAX_GENERATION_ATTEMPTS = 3
+
+# Temperature used when regenerating after a validation failure. The first
+# attempt runs deterministically (temperature 0); without a bump the identical
+# prompt would yield the identical invalid output, wasting the retries. Kept
+# small so the output still tracks the prompt closely. (Reasoning models that
+# reject temperature are unaffected — the provider call drops it for them.)
+_RETRY_TEMPERATURE = 0.3
 
 
-def _job_store():
-    return AsyncJobStore(
-        redis_url=current_app.config["REDIS_URL"],
-        ttl_seconds=current_app.config.get("ASYNC_JOB_TTL_SECONDS", 3600),
-        use_mock=current_app.config.get("REDIS_USE_MOCK", False),
+def _format_issues(issues):
+    """Render validation problems as an indented, one-per-line bulleted list.
+
+    Produces output like::
+
+        Issues:
+          - first problem
+          - second problem
+
+    so a multi-problem rejection is readable in the console instead of a single
+    semicolon-run line.
+    """
+    return "\n" + "\n".join(f"  - {issue}" for issue in issues)
+
+
+def _log_total_token_usage(usage_records, provider, model):
+    """Log the token usage summed across every attempt of one request.
+
+    No-op when nothing was recorded (token logging disabled, or a mocked
+    service in tests). Lives in the route rather than the service because the
+    per-request total spans the multiple service calls the retry loop owns.
+    """
+    if not usage_records:
+        return
+    prompt = sum(u["prompt"] for u in usage_records)
+    cached = sum(u.get("cached", 0) for u in usage_records)
+    completion = sum(u["completion"] for u in usage_records)
+    total = sum(u["total"] for u in usage_records)
+    # Cost is omitted for any attempt on an unpriced model, so only sum the known
+    # ones. ``cost`` is the actual (cache-discounted) figure; ``cost_full`` the
+    # hypothetical no-cache figure, so the saving can be shown for comparison.
+    costs = [u["cost"] for u in usage_records if u.get("cost") is not None]
+    costs_full = [
+        u["cost_full"] for u in usage_records if u.get("cost_full") is not None
+    ]
+    actual = sum(costs) if costs else None
+    full = sum(costs_full) if costs_full else None
+    cost_str = log_utils.format_cost(actual, full, cached, compare=True)
+    # Logged as two separate records so each gets its own timestamp/level prefix.
+    # The breakdown line starts with the arrow flush against the message (no
+    # leading indent), so it reads as a clear continuation of the line above.
+    logger.info(
+        "Total token usage for request: %d LLM call(s) (provider=%s, model=%s)",
+        len(usage_records),
+        provider,
+        model,
+    )
+    logger.info(
+        "-> input=%d (cached=%d) output=%d total=%s%s",
+        prompt,
+        cached,
+        completion,
+        log_utils.emphasize(total, log_utils.BOLD, log_utils.CYAN),
+        f" {cost_str}" if cost_str else "",
     )
 
 
-def _validate_generate_payload(api_key, data):
-    if api_key is None:
-        return _v2_error(401, "unauthorized", "Missing or malformed Authorization header.")
+def _generate_validated(**generate_kwargs):
+    """Generate a process model, regenerating until it passes validation.
 
-    if not isinstance(data, dict):
-        return _v2_error(400, "invalid_request", "Request body must be JSON.")
+    Calls the LLM up to ``_MAX_GENERATION_ATTEMPTS`` times; the first response
+    that passes validation is returned unchanged. A response that fails a
+    validator triggers a fresh generation. Returns ``None`` if every attempt
+    fails, so the caller can return a single generic error.
 
-    missing = [f for f in ("user_text", "provider", "model") if not data.get(f)]
-    if missing:
-        return _v2_error(
-            400,
-            "invalid_request",
-            f"Missing or empty field(s): {', '.join(missing)}.",
-        )
+    Validation runs on the parsed model; a response that is not JSON is returned
+    as-is (JSON-ness is the downstream contract's concern, and will be covered by
+    enforced structured output).
 
-    if data.get("prompting_strategy", "zero_shot") not in _SUPPORTED_PROMPTING_STRATEGIES:
-        allowed = ", ".join(sorted(_SUPPORTED_PROMPTING_STRATEGIES))
-        return _v2_error(
-            400,
-            "invalid_request",
-            f"Invalid prompting_strategy '{data.get('prompting_strategy')}'. Allowed values: {allowed}.",
-        )
-
-    provider = data["provider"]
-    model = data["model"]
+    Raises ``ValidationError`` carrying the last attempt's problems if every
+    attempt fails, so the caller can surface a meaningful reason instead of a
+    generic error.
+    """
+    provider = generate_kwargs.get("provider")
+    model_name = generate_kwargs.get("model")
+    # Token usage of each attempt is collected here so the total across all
+    # retries can be logged once when the request finishes (success or failure).
+    usage_out = []
+    feedback = None
+    previous_model = None
+    last_issues = []
     try:
-        model_registry.refresh_model_cache(provider=provider, api_key=api_key)
-    except Exception as refresh_err:
-        logger.warning(
-            "Model cache refresh failed for provider %s: %s",
-            provider,
-            refresh_err,
-        )
-
-    if not model_registry.is_valid(provider, model):
-        return _v2_error(
-            400,
-            "invalid_provider",
-            f"Unknown provider/model: {provider}/{model}.",
-        )
-
-    return None
-
-
-def _run_async_generate(app, job_id, api_key, data):
-    with app.app_context():
-        store = _job_store()
-        store.update_status(job_id, "running")
-        try:
+        for attempt in range(1, _MAX_GENERATION_ATTEMPTS + 1):
+            # Deterministic first attempt; regenerations use a small non-zero
+            # temperature so a rejected output is not reproduced verbatim, and
+            # carry the previous attempt's validation problems plus the rejected
+            # model so the model fixes that exact model instead of diverging.
+            temperature = 0.0 if attempt == 1 else _RETRY_TEMPERATURE
+            generate_kwargs["temperature"] = temperature
+            logger.info(
+                "Generation attempt %d/%d (provider=%s, model=%s, temperature=%s, %s)",
+                attempt,
+                _MAX_GENERATION_ATTEMPTS,
+                provider,
+                model_name,
+                temperature,
+                "with correction feedback" if feedback else "first try, no feedback",
+            )
             raw_response = _llm_service.generate(
-                api_key=api_key,
-                provider=data["provider"],
-                model=data["model"],
-                user_text=data["user_text"],
-                system_prompt=current_app.config["SYSTEM_PROMPT"],
-                prompting_strategy=data.get("prompting_strategy", "zero_shot"),
+                **generate_kwargs,
+                feedback=feedback,
+                previous_model=previous_model,
+                usage_out=usage_out,
             )
-            store.update_status(
-                job_id,
-                "succeeded",
-                result={"raw_response": raw_response},
-                error=None,
-            )
-        except EmptyResponseError as e:
-            store.update_status(
-                job_id,
-                "failed",
-                error={
-                    "code": "invalid_request",
-                    "message": "The LLM provider returned an empty response.",
-                    "detail": str(e),
-                },
-            )
-        except Exception as e:
-            error_code = "rate_limited" if _is_quota_error(e) else "upstream_error"
-            error_message = (
-                "Provider quota or rate limit exceeded. Try again later or use another model."
-                if error_code == "rate_limited"
-                else "The LLM provider call failed."
-            )
-            store.update_status(
-                job_id,
-                "failed",
-                error={"code": error_code, "message": error_message, "detail": str(e)},
-            )
+            try:
+                model = json.loads(raw_response)
+            except (json.JSONDecodeError, TypeError):
+                logger.info(
+                    "Attempt %d/%d returned non-JSON output; passing through "
+                    "unvalidated.",
+                    attempt,
+                    _MAX_GENERATION_ATTEMPTS,
+                )
+                return raw_response
+            try:
+                validate_model(model)
+                logger.info(
+                    "Generation attempt %d/%d passed validation.",
+                    attempt,
+                    _MAX_GENERATION_ATTEMPTS,
+                )
+                return raw_response
+            except ValidationError as e:
+                feedback = str(e)
+                last_issues = e.issues
+                previous_model = raw_response
+                if attempt < _MAX_GENERATION_ATTEMPTS:
+                    logger.warning(
+                        "Generation attempt %d/%d failed validation; retrying with "
+                        "feedback. Issues:%s",
+                        attempt,
+                        _MAX_GENERATION_ATTEMPTS,
+                        _format_issues(e.issues),
+                    )
+                else:
+                    logger.error(
+                        "Generation attempt %d/%d failed validation; no attempts "
+                        "left. Giving up. Last issues:%s",
+                        attempt,
+                        _MAX_GENERATION_ATTEMPTS,
+                        _format_issues(e.issues),
+                    )
+        raise ValidationError(last_issues)
+    finally:
+        _log_total_token_usage(usage_out, provider, model_name)
 
 
 # --- v2 contract API (consumed by t2p-2.0) --------------------------------
@@ -133,9 +198,18 @@ def _run_async_generate(app, job_id, api_key, data):
 # can relay 4xx client errors unchanged.
 
 
-def _v2_error(status_code, code, message):
-    """Build the standard connector error body and status tuple."""
-    return jsonify({"error": {"code": code, "message": message}}), status_code
+def _v2_error(status_code, code, message, details=None):
+    """Build the standard connector error body and status tuple.
+
+    ``details`` (optional) is a list of structured, machine-readable specifics
+    for errors that carry them — e.g. the individual validation problems behind
+    a ``model_unprocessable``. It is omitted from the body when not provided, so
+    simple errors stay a flat ``{code, message}``.
+    """
+    error = {"code": code, "message": message, "request_id": get_request_id()}
+    if details:
+        error["details"] = list(details)
+    return jsonify({"error": error}), status_code
 
 
 def _extract_bearer_key():
@@ -150,136 +224,173 @@ def _extract_bearer_key():
     return None
 
 
-def _is_quota_error(exc):
-    """Return True for provider quota/rate-limit style exceptions."""
-    text = str(exc or "").lower()
-    indicators = (
-        "quota",
-        "resourceexhausted",
-        "too many requests",
-        "rate limit",
-        "perday",
+def _validate_request(api_key, data):
+    """Pre-generation validation shared by the sync and async paths.
+
+    Returns a normalized error dict ``{http_status, code, message, details}`` on
+    rejection, or ``None`` when the request is well-formed. Request-free: it
+    takes the already-extracted key and parsed body so the async worker (which
+    runs without a request context) can reuse it.
+    """
+    if api_key is None:
+        return {
+            "http_status": 401,
+            "code": "unauthorized",
+            "message": "Missing or malformed Authorization header.",
+            "details": None,
+        }
+    if not isinstance(data, dict):
+        return {
+            "http_status": 400,
+            "code": "invalid_request",
+            "message": "Request body must be JSON.",
+            "details": None,
+        }
+    missing = [f for f in ("user_text", "provider", "model") if not data.get(f)]
+    if missing:
+        # Log what actually arrived so a malformed client request is diagnosable
+        # from the server logs (this happens before any LLM call or retry).
+        logger.warning(
+            "/generate rejected (invalid_request): missing/empty %s; "
+            "body keys received: %s",
+            missing,
+            sorted(data.keys()),
+        )
+        return {
+            "http_status": 400,
+            "code": "invalid_request",
+            "message": f"Missing or empty field(s): {', '.join(missing)}.",
+            "details": None,
+        }
+    if not model_registry.is_valid(data["provider"], data["model"]):
+        return {
+            "http_status": 400,
+            "code": "invalid_provider",
+            "message": f"Unknown provider/model: {data['provider']}/{data['model']}.",
+            "details": None,
+        }
+    return None
+
+
+def _generate_only(api_key, data):
+    """Run the validated generation (assumes the request already passed
+    ``_validate_request``).
+
+    Returns ``(result, error)`` with exactly one set: ``result =
+    {"raw_response": str}`` on success, else a normalized error dict. Request-free
+    so the async worker can reuse it.
+    """
+    provider = data["provider"]
+    model = data["model"]
+    logger.info("Invoking LLMService.generate (provider=%s, model=%s)", provider, model)
+    try:
+        raw_response = _generate_validated(
+            api_key=api_key,
+            provider=provider,
+            model=model,
+            user_text=data["user_text"],
+            system_prompt=current_app.config["SYSTEM_PROMPT"],
+            prompting_strategy=data.get("prompting_strategy", "few_shot"),
+        )
+    except ValidationError as e:
+        # The provider answered, but no attempt produced a valid workflow net.
+        # Unprocessable *input* -> 422 (client-actionable: rephrase), with the
+        # concrete validator problems in ``details`` for diagnostics.
+        return None, {
+            "http_status": 422,
+            "code": "model_unprocessable",
+            "message": (
+                "Could not generate a valid process model from the description "
+                f"after {_MAX_GENERATION_ATTEMPTS} attempts. The description may "
+                "be too ambiguous or describe a flow that cannot be expressed as "
+                "a sound workflow net (e.g. branches or merges without a gateway, "
+                "or more than one possible ending). Try rephrasing or "
+                "simplifying it."
+            ),
+            "details": list(e.issues),
+        }
+    except ProviderError as e:
+        # Upstream provider rejected/failed. Mirror its status (429 retryable,
+        # else bad-gateway). Traceback already logged in the service layer.
+        http_status = 429 if e.upstream_status == 429 else 502
+        return None, {
+            "http_status": http_status,
+            "code": "upstream_error",
+            "message": str(e),
+            "details": None,
+        }
+    return {"raw_response": raw_response}, None
+
+
+def _job_store():
+    return AsyncJobStore(
+        redis_url=current_app.config["REDIS_URL"],
+        ttl_seconds=current_app.config.get("ASYNC_JOB_TTL_SECONDS", 3600),
+        use_mock=current_app.config.get("REDIS_USE_MOCK", False),
     )
-    return any(token in text for token in indicators)
+
+
+def _run_async_generate(app, job_id, request_id, api_key, data):
+    """Background worker: run the generation and record the outcome in the job
+    store. Runs outside any request context, so it re-binds the correlation id
+    and uses the request-free ``_generate_only``.
+    """
+    with app.app_context():
+        set_request_id(request_id)
+        store = _job_store()
+        store.update_status(job_id, "running")
+        try:
+            result, error = _generate_only(api_key, data)
+        except Exception as e:  # never let a worker thread die silently
+            logger.exception("Async generation crashed: %s", e)
+            result, error = (
+                None,
+                {
+                    "http_status": 500,
+                    "code": "internal_error",
+                    "message": "An unexpected error occurred.",
+                    "details": None,
+                },
+            )
+        if error is not None:
+            store.update_status(job_id, "failed", error=error)
+        else:
+            store.update_status(job_id, "succeeded", result=result)
 
 
 @bp.route("/generate", methods=["POST"])
-@swag_from(
-    {
-        "tags": ["v2-contract"],
-        "summary": "Generate process model",
-        "description": "Generate a structured BPMN JSON model from process text.",
-        "security": [{"bearerAuth": []}],
-        "requestBody": {
-            "required": True,
-            "content": {
-                "application/json": {
-                    "schema": {
-                        "type": "object",
-                        "required": ["user_text", "provider", "model"],
-                        "properties": {
-                            "user_text": {"type": "string"},
-                            "provider": {"type": "string"},
-                            "model": {"type": "string"},
-                            "prompting_strategy": {
-                                "type": "string",
-                                "enum": ["zero_shot", "few_shot"],
-                                "default": "zero_shot",
-                            },
-                        },
-                    }
-                }
-            },
-        },
-        "responses": {
-            "200": {
-                "description": "Successful provider response",
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object",
-                            "properties": {"raw_response": {"type": "string"}},
-                        }
-                    }
-                },
-            },
-            "400": {"description": "Invalid request or provider/model"},
-            "401": {"description": "Missing or malformed Authorization header"},
-            "429": {"description": "Provider quota or rate limit exceeded"},
-            "500": {"description": "Upstream provider failure"},
-        },
-    }
-)
 def generate():
     """Generate a structured BPMN-JSON process model from a description.
 
     Provider/model are validated against the registry; the API key is taken
     from the Authorization header (never from the body). Returns
     ``{"raw_response": <string>}`` on success.
+
+    This synchronous endpoint is kept as the stable contract and as the async
+    fallback; t2p-2.0 normally drives generation through the internal async
+    submit/poll endpoints below.
     """
     start_time = time.time()
     status = "200"
     try:
         api_key = _extract_bearer_key()
         data = request.get_json(silent=True)
-        validation_error = _validate_generate_payload(api_key, data)
-        if validation_error is not None:
-            status = str(validation_error[1])
-            return validation_error
-
-        provider = data["provider"]
-        model = data["model"]
-        prompting_strategy = data.get("prompting_strategy", "zero_shot")
-
-        # Refresh the model cache with the caller's key so is_valid reflects
-        # the live model list for that key rather than a stale startup cache.
-        try:
-            model_registry.refresh_model_cache(provider=provider, api_key=api_key)
-        except Exception as refresh_err:
-            logger.warning(
-                "Model cache refresh failed for provider %s: %s",
-                provider,
-                refresh_err,
+        error = _validate_request(api_key, data)
+        if error is None:
+            result, error = _generate_only(api_key, data)
+        if error is not None:
+            status = str(error["http_status"])
+            return _v2_error(
+                error["http_status"],
+                error["code"],
+                error["message"],
+                error.get("details"),
             )
-
-        logger.info(
-            "Invoking LLMService.generate (provider=%s, model=%s)", provider, model
-        )
-        raw_response = _llm_service.generate(
-            api_key=api_key,
-            provider=provider,
-            model=model,
-            user_text=data["user_text"],
-            system_prompt=current_app.config["SYSTEM_PROMPT"],
-            prompting_strategy=prompting_strategy,
-        )
-        return jsonify({"raw_response": raw_response}), 200
-
+        return jsonify(result), 200
     except Exception as e:
-        if isinstance(e, EmptyResponseError):
-            status = "400"
-            logger.warning("/generate rejected empty provider response: %s", e)
-            return _v2_error(
-                400,
-                "invalid_request",
-                "The LLM provider returned an empty response.",
-            )
-
-        if _is_quota_error(e):
-            status = "429"
-            logger.warning("/generate provider quota exceeded: %s", e)
-            return _v2_error(
-                429,
-                "rate_limited",
-                (
-                    "Provider quota or rate limit exceeded. "
-                    "Try again later or use another model."
-                ),
-            )
-
         status = "500"
         logger.exception("/generate failed: %s", e)
-        return _v2_error(500, "upstream_error", "The LLM provider call failed.")
+        return _v2_error(500, "internal_error", "An unexpected error occurred.")
     finally:
         REQUEST_COUNT.labels(method="POST", endpoint="/generate", status=status).inc()
         REQUEST_LATENCY.labels(method="POST", endpoint="/generate").observe(
@@ -289,27 +400,38 @@ def generate():
 
 @bp.route("/internal/jobs/generate", methods=["POST"])
 def internal_generate_submit():
-    """Internal-only async submit endpoint used by t2p orchestration."""
+    """Async submit: validate, enqueue a background generation, return a job id.
+
+    Used by t2p-2.0 so the long, multi-attempt generation is not held open on a
+    single HTTP request (the connection that would otherwise hit the gunicorn
+    worker timeout). Pre-generation validation runs synchronously, so malformed
+    requests still get an immediate 4xx instead of a queued job.
+    """
     if not current_app.config.get("INTERNAL_ASYNC_ENABLED", True):
         return _v2_error(404, "not_found", "Internal async endpoint is disabled.")
 
     api_key = _extract_bearer_key()
     data = request.get_json(silent=True)
-    validation_error = _validate_generate_payload(api_key, data)
-    if validation_error is not None:
-        return validation_error
+    error = _validate_request(api_key, data)
+    if error is not None:
+        return _v2_error(
+            error["http_status"], error["code"], error["message"], error.get("details")
+        )
 
     store = _job_store()
     job_id = store.create()
-
-    app_obj = current_app._get_current_object()
     worker = threading.Thread(
         target=_run_async_generate,
-        args=(app_obj, job_id, api_key, data),
+        args=(
+            current_app._get_current_object(),
+            job_id,
+            get_request_id(),
+            api_key,
+            data,
+        ),
         daemon=True,
     )
     worker.start()
-
     return (
         jsonify(
             {
@@ -324,7 +446,13 @@ def internal_generate_submit():
 
 @bp.route("/internal/jobs/<job_id>", methods=["GET"])
 def internal_generate_status(job_id):
-    """Internal-only async status endpoint used by t2p orchestration."""
+    """Async status: return the job's terminal result/error, or its progress.
+
+    The stored ``error`` keeps the same ``{http_status, code, message, details}``
+    shape the sync endpoint would have returned, so t2p-2.0 can preserve the
+    original 4xx semantics (e.g. 422 model_unprocessable) instead of collapsing
+    every async failure to a generic 5xx.
+    """
     if not current_app.config.get("INTERNAL_ASYNC_ENABLED", True):
         return _v2_error(404, "not_found", "Internal async endpoint is disabled.")
 
@@ -347,55 +475,12 @@ def internal_generate_status(job_id):
 
 
 @bp.route("/models", methods=["GET"])
-@swag_from(
-    {
-        "tags": ["v2-contract"],
-        "summary": "List models",
-        "description": "Return supported provider/model pairs.",
-        "responses": {
-            "200": {
-                "description": "Models listed",
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object",
-                            "properties": {
-                                "models": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "provider": {"type": "string"},
-                                            "model": {"type": "string"},
-                                        },
-                                    },
-                                }
-                            },
-                        }
-                    }
-                },
-            },
-            "500": {"description": "Internal error"},
-        },
-    }
-)
 def models():
-    """Return the advertised provider/model pairs from the registry.
-
-    If an ``Authorization: Bearer <key>`` header is present the key is used for
-    live discovery so the caller sees the model list available to their key.
-    Without a key the endpoint falls back to the env-level key (startup cache).
-    """
+    """Return the advertised provider/model pairs from the registry."""
     start_time = time.time()
     status = "200"
     try:
-        provider = request.args.get("provider") or None
-        api_key = _extract_bearer_key()
-        model_registry.refresh_model_cache(provider=provider, api_key=api_key)
-        return (
-            jsonify({"models": model_registry.get_cached_models(provider=provider)}),
-            200,
-        )
+        return jsonify({"models": model_registry.list_models()}), 200
     except Exception as e:
         status = "500"
         logger.exception("/models failed: %s", e)
@@ -408,26 +493,6 @@ def models():
 
 
 @bp.route("/_/_/echo")
-@swag_from(
-    {
-        "tags": ["operations"],
-        "summary": "Health check",
-        "description": "Operational liveness endpoint.",
-        "responses": {
-            "200": {
-                "description": "Service is reachable",
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object",
-                            "properties": {"success": {"type": "boolean"}},
-                        }
-                    }
-                },
-            }
-        },
-    }
-)
 def echo():
     """Health check endpoint"""
     logger.debug("Health check hit: /_/_/echo")
@@ -435,139 +500,9 @@ def echo():
     return jsonify(success=True)
 
 
-@bp.route("/health/providers", methods=["GET"])
-@swag_from(
-    {
-        "tags": ["operations"],
-        "summary": "Provider reachability",
-        "description": (
-            "Checks OpenAI/Gemini host reachability without provider secrets. "
-            "HTTP auth errors (for example 401) still count as reachable."
-        ),
-        "parameters": [
-            {
-                "name": "provider",
-                "in": "query",
-                "required": False,
-                "schema": {"type": "string", "enum": ["openai", "gemini"]},
-            },
-            {
-                "name": "timeout",
-                "in": "query",
-                "required": False,
-                "schema": {"type": "integer", "minimum": 1, "maximum": 30},
-                "description": "Probe timeout in seconds (default 5).",
-            },
-        ],
-        "responses": {
-            "200": {"description": "All requested providers reachable"},
-            "400": {"description": "Invalid query parameter"},
-            "503": {"description": "One or more providers unreachable"},
-        },
-    }
-)
-def provider_health():
-    """Return non-secret connectivity diagnostics for provider hosts."""
-    start_time = time.time()
-    status = "200"
-    try:
-        provider = request.args.get("provider") or None
-        timeout_raw = request.args.get("timeout") or "5"
-
-        try:
-            timeout_seconds = int(timeout_raw)
-        except ValueError:
-            status = "400"
-            return _v2_error(400, "invalid_request", "timeout must be an integer.")
-
-        try:
-            diagnostics = model_registry.provider_connectivity(
-                provider=provider,
-                timeout_seconds=timeout_seconds,
-            )
-        except ValueError as exc:
-            status = "400"
-            return _v2_error(400, "invalid_request", str(exc))
-
-        all_reachable = all(item.get("reachable") for item in diagnostics)
-        response = {
-            "all_reachable": all_reachable,
-            "providers": diagnostics,
-        }
-
-        if all_reachable:
-            return jsonify(response), 200
-
-        status = "503"
-        return jsonify(response), 503
-    except Exception as exc:
-        status = "500"
-        logger.exception("/health/providers failed: %s", exc)
-        return _v2_error(500, "internal_error", "Provider health check failed.")
-    finally:
-        REQUEST_COUNT.labels(
-            method="GET", endpoint="/health/providers", status=status
-        ).inc()
-        REQUEST_LATENCY.labels(method="GET", endpoint="/health/providers").observe(
-            time.time() - start_time
-        )
-
-
-@bp.route("/health/ready", methods=["GET"])
-@swag_from(
-    {
-        "tags": ["operations"],
-        "summary": "Readiness probe",
-        "description": (
-            "Compact readiness check based on provider host connectivity. "
-            "Returns 200 when all providers are reachable, otherwise 503."
-        ),
-        "responses": {
-            "200": {"description": "Service is ready"},
-            "503": {"description": "Service is not ready"},
-        },
-    }
-)
-def readiness_health():
-    """Readiness probe suitable for orchestrators/load balancers."""
-    start_time = time.time()
-    status = "200"
-    try:
-        diagnostics = model_registry.provider_connectivity(
-            provider=None, timeout_seconds=3
-        )
-        all_reachable = all(item.get("reachable") for item in diagnostics)
-
-        response = {
-            "ready": all_reachable,
-            "checked_providers": [item.get("provider") for item in diagnostics],
-        }
-
-        if all_reachable:
-            return jsonify(response), 200
-
-        status = "503"
-        return jsonify(response), 503
-    except Exception as exc:
-        status = "503"
-        logger.exception("/health/ready failed: %s", exc)
-        return jsonify({"ready": False, "checked_providers": []}), 503
-    finally:
-        REQUEST_COUNT.labels(
-            method="GET", endpoint="/health/ready", status=status
-        ).inc()
-        REQUEST_LATENCY.labels(method="GET", endpoint="/health/ready").observe(
-            time.time() - start_time
-        )
-
-
 @bp.route("/metrics")
 def metrics():
     """Expose Prometheus metrics."""
     logger.debug("Metrics scraped: /metrics")
     REQUEST_COUNT.labels(method="GET", endpoint="/metrics", status="200").inc()
-    return (
-        prometheus_client.generate_latest(),
-        200,
-        {"Content-Type": prometheus_client.CONTENT_TYPE_LATEST},
-    )
+    return generate_latest(), 200, {"Content-Type": CONTENT_TYPE_LATEST}

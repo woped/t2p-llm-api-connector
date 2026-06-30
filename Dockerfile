@@ -9,6 +9,7 @@ ENV FLASK_APP=llm-api-connector.py \
 # User + Gruppe anlegen
 RUN addgroup -S flasky && adduser -S -G flasky flasky
 
+# Redis backs the internal async job store (container-local).
 RUN apk add --no-cache redis
 
 WORKDIR /home/flasky
@@ -21,7 +22,7 @@ RUN python -m venv venv && venv/bin/pip install -r requirements/docker.txt
 COPY --chown=flasky:flasky app app
 COPY --chown=flasky:flasky llm-api-connector.py config.py boot.sh redis.conf ./
 
-# Rechte setzen (noch root, oder direkt per COPY + Ausführbit gesetzt)
+# Rechte setzen + Redis-Arbeitsverzeichnisse anlegen
 RUN mkdir -p /home/flasky/redis-data /home/flasky/redis-run \
     && chown -R flasky:flasky /home/flasky/redis-data /home/flasky/redis-run \
     && chmod 0750 boot.sh

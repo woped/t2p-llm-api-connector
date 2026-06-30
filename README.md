@@ -1,6 +1,6 @@
 ﻿# llm-api-connector
 
-HTTP connector service that proxies process-description text to LLM providers (OpenAI, Google Gemini) and returns the raw model response. Consumed by the t2p-2.0 backend.
+HTTP connector service that turns process-description text into a structured BPMN-JSON process model via an LLM provider (OpenAI, Google Gemini). It enforces structured output, validates the result against workflow-net rules, and regenerates on failure before returning the raw model response. Consumed by the t2p-2.0 backend.
 
 ## Prerequisites
 
@@ -34,9 +34,8 @@ A `.flaskenv` file in the project root already sets `FLASK_APP` and the environm
 flask run
 ```
 
-The application will be accessible at http://localhost:5001.  
-The interactive API documentation (Swagger UI) is available at http://localhost:5001/docs/.
-The generated OpenAPI specification is available at http://localhost:5001/openapi.json.
+The application will be accessible at http://localhost:5000.  
+The interactive API documentation (Swagger UI) is available at http://localhost:5000/docs.
 
 > **Note:** `FLASK_ENV` is still used by this project's `config.py` to select the active configuration class (`development` / `production` / `testing`). It is separate from Flask's own debug flag and is already pre-configured in `.flaskenv` for local development — no manual export is needed.
 
@@ -53,42 +52,38 @@ Example request body for `POST /generate`:
 {
   "user_text": "A customer submits an order. A clerk checks the inventory ...",
   "provider": "openai",
-  "model": "gpt-4o",
+  "model": "gpt-5.4-mini",
   "prompting_strategy": "few_shot"
 }
 ```
 
-For supported providers, the connector accepts any submitted model name and forwards it to
-the provider. Newly released provider models therefore do not require a code change in the
-connector.
+### Structured output and validation
 
-`prompting_strategy` is optional. Supported values are `zero_shot` and `few_shot`.
-If omitted, `zero_shot` is used by default.
+The connector does not blindly forward the model's reply. Both providers are
+constrained to a shared Pydantic schema (`app/schemas.py`) for structured output,
+so the response is always valid JSON with the expected element/flow types. The
+parsed model is then checked by the validators in `app/validation.py` — eight pure,
+non-mutating `(model) -> list[str]` checks (single start/end, connectivity, explicit
+splits/joins, unique ids, …) enforcing what a sound WoPeD workflow net requires.
 
-Use `GET /models` to retrieve the list of provider/model pairs discovered from the backing
-providers. If you pass `Authorization: Bearer <api_key>`, the connector can use that key for
-discovery; otherwise it uses configured environment keys when available. See `/openapi.json`
-or the Swagger UI at `/docs/` for the full API contract.
+If validation fails, `POST /generate` retries: it regenerates up to 3 times total,
+raising the temperature and feeding the previous attempt's concrete problems back to
+the model so it repairs that exact model rather than diverging. The first response
+that passes is returned in `raw_response`. If every attempt still fails, the request
+returns `422 model_unprocessable` with the last attempt's problems in `details`.
 
-## Provider Host Configuration
+### Supported models
 
-By default, providers are called via their public endpoints. For production gateways,
-reverse proxies, or internal egress setups, you can override provider hosts via environment
-variables:
+| Provider | Model | Notes |
+|----------|-------|-------|
+| `openai` | `gpt-5.5` | Newest general-purpose standard model |
+| `openai` | `gpt-5.4-mini` | Cost-effective, recommended default |
+| `openai` | `gpt-5.4-nano` | Cheapest, high-volume / low-latency |
+| `openai` | `gpt-4o` | Legacy — kept for backward compatibility |
+| `gemini` | `gemini-3.5-flash` | Newest flash tier, best price/performance |
+| `gemini` | `gemini-3.1-flash-lite` | Cheapest, high-volume / low-latency |
 
-- `OPENAI_BASE_URL` (alias: `OPENAI_HOST`)
-- `GEMINI_API_ENDPOINT` (alias: `GEMINI_HOST`)
-
-Example:
-
-```bash
-docker run -p 5000:5000 \
-  -e OPENAI_BASE_URL=https://api.openai.com/v1 \
-  -e GEMINI_API_ENDPOINT=generativelanguage.googleapis.com \
-  -e OPENAI_API_KEY=... \
-  -e GEMINI_API_KEY=... \
-  llm-api-connector
-```
+Use `GET /models` to retrieve the current list at runtime. See `docs/openapi.yaml` or the Swagger UI at `/docs` for the full API contract.
 
 ## Running the Application with Docker
 
@@ -103,38 +98,18 @@ docker run -p 5000:5000 llm-api-connector
 ```
 The application will be accessible at http://localhost:5000.
 
-## Release Bump Controls
-
-The CD workflow supports controlled semantic bumps using GitHub Actions repository variables:
-
-- `ALLOW_MINOR_BUMP`
-- `ALLOW_MAJOR_BUMP`
-
-Default behavior (recommended):
-
-- `ALLOW_MINOR_BUMP=false`
-- `ALLOW_MAJOR_BUMP=false`
-
-With these defaults, the pipeline always creates a patch bump (`vX.Y.Z -> vX.Y.(Z+1)`).
-
-When enabled:
-
-- If `ALLOW_MINOR_BUMP=true`, the workflow can apply a minor bump suggested by semantic-release.
-- If `ALLOW_MAJOR_BUMP=true`, the workflow can apply a major bump suggested by semantic-release.
-
-Boolean values accepted as true are: `true`, `1`, `yes`, `y`, `on` (case-insensitive). Any other value is treated as false.
-
-Configure these variables in repository settings:
-
-- GitHub -> Settings -> Secrets and variables -> Actions -> Variables -> Repository variables
-
 ## Testing
 
 Run the following commands from the **project root** (not the `tests` folder — the test suite needs to resolve the `app` package):
 
 ```bash
-coverage run -m unittest discover -s tests
+coverage run -m pytest
 ```
+> The suite runs under **pytest** (not `unittest discover`): several modules are
+> plain pytest functions — the validators and the few-shot guard — which
+> `unittest discover` silently skips. `flask test` uses pytest for the same
+> reason.
+
 You can then view the coverage report by running:
 ```bash
 coverage report

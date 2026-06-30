@@ -1,45 +1,33 @@
 import logging
+import os
 import sys
 import time
-import unittest
-
-import yaml
-from flasgger import Swagger
-from flask import Flask, g, request
-from flask_wtf.csrf import CSRFProtect
-
-from app.services import model_registry
 from config import get_config
+from flask import Flask, request, g, send_from_directory
+from flask_wtf.csrf import CSRFProtect
+from flask_swagger_ui import get_swaggerui_blueprint
+from app.request_id import REQUEST_ID_HEADER, get_request_id, set_request_id
 
+# Logging is configured once, centrally, by setup_logging() in the entrypoint
+# (llm-api-connector.py). Modules only obtain a logger — calling basicConfig here
+# installed a second root handler and every line was emitted twice (plain + JSON).
 logger = logging.getLogger(__name__)
 
-
-def _ensure_stdout_logging(level=logging.INFO):
-    """Ensure process log handlers emit to stdout.
-
-    This keeps logs visible in container aggregators that capture stdout.
-    """
-    root_logger = logging.getLogger()
-    root_logger.setLevel(level)
-
-    has_stdout_handler = False
-    for handler in root_logger.handlers:
-        if isinstance(handler, logging.StreamHandler):
-            handler.setStream(sys.stdout)
-            has_stdout_handler = True
-
-    if not has_stdout_handler:
-        stdout_handler = logging.StreamHandler(stream=sys.stdout)
-        stdout_handler.setLevel(level)
-        stdout_handler.setFormatter(
-            logging.Formatter("%(levelname)s:%(name)s:%(message)s")
-        )
-        root_logger.addHandler(stdout_handler)
+# Endpoints that are polled/automated rather than user-driven; they do not get a
+# request separator so the console stays focused on real /generate traffic.
+# ``str.startswith`` accepts this tuple directly.
+_QUIET_PATHS = (
+    "/metrics",
+    "/docs",
+    "/openapi.yaml",
+    "/_/_/echo",
+    "/static",
+    "/favicon.ico",
+)
 
 
 def create_app(config_class=None):
     """Application factory pattern"""
-    _ensure_stdout_logging(level=logging.INFO)
     app = Flask(__name__)
 
     # Load configuration
@@ -62,7 +50,7 @@ def create_app(config_class=None):
 
     # CSRF-Security
     if app.config.get("WTF_CSRF_ENABLED", True):
-        CSRFProtect(app)
+        CSRFProtect(app)  # registers itself on the app; no handle needed
         logger.info("CSRF protection enabled")
 
     # Register blueprints
@@ -71,69 +59,42 @@ def create_app(config_class=None):
     app.register_blueprint(api_bp)
     logger.info("Blueprints registered")
 
-    # Warm the provider model cache once at startup using configured provider
-    # environment keys. Subsequent refreshes are triggered explicitly by /models.
-    try:
-        model_registry.refresh_model_cache()
-        logger.info("Provider model cache warmed at startup")
-    except Exception as e:
-        logger.warning("Failed to warm provider model cache at startup: %s", e)
+    # Swagger UI  — served at /docs, spec sourced from /openapi.yaml
+    SWAGGER_URL = "/docs"
+    SPEC_URL = "/openapi.yaml"
+    swaggerui_bp = get_swaggerui_blueprint(
+        SWAGGER_URL,
+        SPEC_URL,
+        config={"app_name": "LLM API Connector"},
+    )
+    app.register_blueprint(swaggerui_bp, url_prefix=SWAGGER_URL)
 
-    # Flasgger / OpenAPI setup.
-    swagger_template = {
-        "openapi": "3.0.2",
-        "info": {
-            "title": "LLM API Connector",
-            "version": "1.0.0",
-            "description": "Internal API used by t2p-2.0 to call LLM providers.",
-        },
-        "components": {
-            "securitySchemes": {
-                "bearerAuth": {
-                    "type": "http",
-                    "scheme": "bearer",
-                    "description": "Provider API key as Authorization: Bearer <api_key>.",
-                }
-            }
-        },
-    }
-    swagger_config = {
-        "headers": [],
-        "specs": [
-            {
-                "endpoint": "openapi",
-                "route": "/openapi.json",
-                "rule_filter": lambda rule: True,
-                "model_filter": lambda tag: True,
-            }
-        ],
-        "static_url_path": "/flasgger_static",
-        "swagger_ui": True,
-        "specs_route": "/docs/",
-    }
-    swagger = Swagger(app, template=swagger_template, config=swagger_config)
+    _docs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "docs")
 
     @app.route("/openapi.yaml")
-    def openapi_yaml_alias():
-        def _to_plain_types(value):
-            if isinstance(value, dict):
-                return {k: _to_plain_types(v) for k, v in value.items()}
-            if isinstance(value, list):
-                return [_to_plain_types(item) for item in value]
-            return value
-
-        openapi_spec = _to_plain_types(swagger.get_apispecs(endpoint="openapi"))
-        openapi_yaml = yaml.safe_dump(openapi_spec, sort_keys=False, allow_unicode=True)
-        return app.response_class(openapi_yaml, mimetype="application/yaml")
+    def serve_openapi_yaml():
+        return send_from_directory(_docs_dir, "openapi.yaml")
 
     # Request logging
     @app.before_request
     def _log_request_start():
         g._start_time = time.time()
+        # Bind the correlation id first so every line below (and in the view)
+        # carries it. Honours the id t2p-2.0 forwards, else mints one.
+        set_request_id(request.headers.get(REQUEST_ID_HEADER))
+        # Emit a visual separator so each request's log block is easy to spot in
+        # the console. Skipped for noise endpoints (health/metrics/docs/static)
+        # so only meaningful requests start a new block. The separator is
+        # rendered only by the pretty console formatter (dropped in JSON mode).
+        if not request.path.startswith(_QUIET_PATHS):
+            logger.info("", extra={"separator": True})
         logger.debug("%s %s -> start", request.method, request.path)
 
     @app.after_request
     def _log_request_end(response):
+        # Echo the correlation id so the caller (and ultimately the end user) can
+        # quote it when reporting a failure.
+        response.headers[REQUEST_ID_HEADER] = get_request_id()
         try:
             duration = None
             if hasattr(g, "_start_time"):
@@ -152,20 +113,20 @@ def create_app(config_class=None):
     # CLI Commands
     @app.cli.command("test")
     def test():
-        """Run the unit tests."""
-        logger.info("Running unit tests...")
-        loader = unittest.TestLoader()
-        start_dir = "tests"
-        suite = loader.discover(start_dir)
+        """Run the full test suite with pytest.
 
-        runner = unittest.TextTestRunner(verbosity=2)
-        result = runner.run(suite)
+        Uses pytest rather than ``unittest`` discovery: several test modules are
+        written as plain pytest functions (the validators and the few-shot
+        guard), which ``unittest discover`` silently skips. Since CI runs this
+        command (``coverage run -m flask test``), discovery would leave the
+        whole validation layer untested there. pytest collects both styles.
+        """
+        import pytest
 
-        if result.wasSuccessful():
-            logger.info("All tests passed.")
-            return 0
-        else:
-            logger.error("Some tests failed.")
-            sys.exit(1)
+        logger.info("Running tests via pytest...")
+        exit_code = pytest.main(["tests", "-q"])
+        if exit_code != 0:
+            sys.exit(int(exit_code))
+        logger.info("All tests passed.")
 
     return app

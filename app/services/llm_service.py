@@ -1,20 +1,63 @@
-import json
 import logging
+import os
 import time
-
-import google.generativeai as genai
-from flask import current_app
 from openai import OpenAI
-
+from google import genai
+from app import log_utils
+from app.utils.prompt_builder import PromptBuilder
+from app.schemas import ProcessModel
 from app.services import model_registry
-from app.services.model_validator import ModelValidator
-from app.utils.prompt_builder import PromptBuilder, STRICT_JSON_REMINDER
+
 
 logger = logging.getLogger(__name__)
 
+# Upper bound on generated tokens, shared by both providers so the output budget
+# is consistent regardless of which model handles the request. This is a ceiling,
+# not a target — callers are billed only for the tokens actually generated — so it
+# is set generously to give large process models room rather than truncating their
+# JSON. Truncation against this bound is detected and surfaced per provider below.
+# Kept within every registered model's output limit (e.g. gpt-4o caps at 16384).
+_MAX_OUTPUT_TOKENS = 8192
 
-class EmptyResponseError(ValueError):
-    """Raised when the provider returns no usable completion text."""
+
+class ProviderError(Exception):
+    """Raised when an upstream LLM provider (OpenAI / Google) call fails.
+
+    Carries the provider's own error text (via ``str``) and, when the SDK
+    exposes it, the upstream HTTP status — enough for the calling service to
+    debug the failure and react (e.g. retry on 429).
+    """
+
+    def __init__(self, message, upstream_status=None):
+        self.upstream_status = upstream_status  # int HTTP status, if known
+        super().__init__(message)
+
+
+def _token_logging_enabled():
+    """Whether per-call token usage should be logged.
+
+    Opt-in by design: it is on automatically when running in development (the
+    local ``flask run`` / ``FLASK_ENV=development`` case), and can be forced on
+    or off regardless of environment via ``LOG_TOKEN_USAGE`` (``1/true/yes/on``
+    vs anything else). Evaluated per call so the env var takes effect without a
+    restart and tests can flip it freely.
+    """
+    flag = os.environ.get("LOG_TOKEN_USAGE")
+    if flag is not None:
+        return flag.strip().lower() in ("1", "true", "yes", "on")
+    return os.environ.get("FLASK_ENV", "development").lower() == "development"
+
+
+def _upstream_status(exc):
+    """Best-effort upstream HTTP status from an SDK exception, else None.
+
+    The OpenAI SDK exposes an int ``status_code``; the google-genai SDK exposes
+    an int ``code``. Returns None when neither is a usable int.
+    """
+    status = getattr(exc, "status_code", None)
+    if status is None and isinstance(getattr(exc, "code", None), int):
+        status = exc.code
+    return status if isinstance(status, int) else None
 
 
 class LLMService:
@@ -22,496 +65,234 @@ class LLMService:
 
     def __init__(self):
         self.prompt_builder = PromptBuilder()
-        self.model_validator = ModelValidator()
 
-    @staticmethod
-    def _config_value(name, default=None):
-        try:
-            return current_app.config.get(name, default)
-        except RuntimeError:
-            return default
-
-    @staticmethod
-    def _extract_json_object(text):
-        """Extract and parse a JSON object from model output text."""
-        content = (text or "").strip()
-        if content.startswith("```"):
-            lines = content.splitlines()
-            if lines and lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].startswith("```"):
-                lines = lines[:-1]
-            content = "\n".join(lines).strip()
-
-        start = content.find("{")
-        end = content.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            raise ValueError("Model output does not contain a JSON object.")
-        return json.loads(content[start:end + 1])
-
-    @staticmethod
-    def _merge_known_elements(partials):
-        """Merge step outputs into known elements map by preserving first-seen IDs."""
-        merged = {"events": [], "tasks": [], "gateways": []}
-        seen = {"events": set(), "tasks": set(), "gateways": set()}
-
-        for part in partials:
-            if not isinstance(part, dict):
-                continue
-            for key in ("events", "tasks", "gateways"):
-                for item in part.get(key, []):
-                    if not isinstance(item, dict):
-                        continue
-                    item_id = item.get("id")
-                    if not item_id or item_id in seen[key]:
-                        continue
-                    seen[key].add(item_id)
-                    merged[key].append(item)
-        return merged
-
-    def _build_repair_prompt(self, user_text, model_json, issues):
-        """Create a repair prompt from validation findings."""
-        issues_block = "\n".join(f"- {issue}" for issue in issues)
-        model_block = json.dumps(model_json, ensure_ascii=False, indent=2)
-        return (
-            "You are repairing a BPMN JSON model to satisfy strict structural rules.\n"
-            f"{STRICT_JSON_REMINDER}\n\n"
-            "Preserve IDs where possible, but fix broken structure.\n\n"
-            "Process text:\n"
-            f"{user_text}\n\n"
-            "Validation issues to fix:\n"
-            f"{issues_block}\n\n"
-            "Current model:\n"
-            f"{model_block}\n"
-        )
-
-    @staticmethod
-    def _extract_openai_message_text(message):
-        """Normalize OpenAI message content into a plain string.
-
-        Some SDK/model combinations return ``message.content`` as a list of
-        typed content parts rather than a single string.
-        """
-        if message is None:
-            return ""
-
-        content = getattr(message, "content", None)
-        if isinstance(content, str):
-            return content.strip()
-
-        if isinstance(content, list):
-            text_parts = []
-            for part in content:
-                if isinstance(part, dict):
-                    if part.get("type") == "text":
-                        text_parts.append(part.get("text", ""))
-                    continue
-
-                if getattr(part, "type", None) == "text":
-                    text_parts.append(getattr(part, "text", ""))
-
-            return "".join(text_parts).strip()
-
-        return ""
-
-    def _has_json_object(self, text):
-        """Return True when text contains a parseable JSON object."""
-        try:
-            self._extract_json_object(text)
-            return True
-        except Exception:  # noqa: BLE001
-            return False
-
-    def _run_few_shot_orchestration(self, user_text, generate_once):
-        """Run real multi-call few-shot extraction and merge with validation."""
-        pack = self.prompt_builder.few_shot_prompt_pack
-        shared = pack.get("00_shared_rules.txt", "")
-
-        required_files = [
-            "01_start_event_prompt.txt",
-            "02_tasks_prompt.txt",
-            "03_gateways_prompt.txt",
-            "04_flows_prompt.txt",
-            "05_end_event_prompt.txt",
-            "06_merge_and_validate_prompt.txt",
-        ]
-        for file_name in required_files:
-            if not pack.get(file_name):
-                raise ValueError(f"Missing few-shot prompt file: {file_name}")
-
-        def compose_prompt(step_text, known_elements=None, partial_outputs=None):
-            body = step_text.replace(
-                "{{PROCESS_TEXT}}",
-                "Summarized process context (derived from full input):\n"
-                f"{process_context}",
-            )
-            if "{{KNOWN_ELEMENTS_JSON}}" in body:
-                body = body.replace(
-                    "{{KNOWN_ELEMENTS_JSON}}",
-                    json.dumps(known_elements or {}, ensure_ascii=False, indent=2),
-                )
-            if "{{PARTIAL_OUTPUTS_JSON}}" in body:
-                body = body.replace(
-                    "{{PARTIAL_OUTPUTS_JSON}}",
-                    json.dumps(partial_outputs or {}, ensure_ascii=False, indent=2),
-                )
-            return (
-                f"{shared}\n\n{body}\n\n"
-                f"{STRICT_JSON_REMINDER}\n"
-                "Return only JSON matching the step schema."
-            ).strip()
-
-        def run_json_step(step_name, prompt):
-            response_text = generate_once(prompt)
-            try:
-                return self._extract_json_object(response_text)
-            except ValueError as first_error:
-                logger.warning(
-                    "few-shot step '%s' returned non-JSON output; retrying with strict JSON reminder",
-                    step_name,
-                )
-                retry_prompt = (
-                    f"{prompt}\n\n"
-                    f"{STRICT_JSON_REMINDER} "
-                    "Respond again with exactly one JSON object matching the requested schema."
-                )
-                retry_response_text = generate_once(retry_prompt)
-                try:
-                    return self._extract_json_object(retry_response_text)
-                except ValueError:
-                    raise ValueError(
-                        f"Few-shot step '{step_name}' did not return a JSON object after retry."
-                    ) from first_error
-
-        # Build a compact context once from the raw process text so follow-up
-        # steps do not need the full source text again.
-        context_summary_prompt = (
-            "You are preparing context for a multi-step BPMN extraction pipeline.\n"
-            f"{shared}\n\n"
-            f"{STRICT_JSON_REMINDER}\n"
-            "Return exactly one JSON object with this schema:\n"
-            '{"process_context": "..."}\n\n'
-            "The value of process_context must be a concise but complete summary "
-            "of the process text (actors, activities, decisions, loops, end states). "
-            "Preserve factual order and key constraints.\n\n"
-            "PROCESS TEXT:\n"
-            f"{user_text}"
-        )
-
-        context_obj = run_json_step("context_summary", context_summary_prompt)
-        process_context = (context_obj.get("process_context") or "").strip()
-        if not process_context:
-            raise ValueError("few-shot context_summary returned empty process_context")
-
-        partials = {}
-
-        try:
-            start_obj = run_json_step(
-                "start_event", compose_prompt(pack["01_start_event_prompt.txt"])
-            )
-        except ValueError as start_error:
-            logger.warning(
-                "few-shot start_event step failed (%s); falling back to default start event",
-                start_error,
-            )
-            start_obj = {
-                "events": [
-                    {
-                        "id": "startEvent1",
-                        "type": "startEvent",
-                        "name": "Start",
-                    }
-                ]
-            }
-        partials["start"] = start_obj
-
-        try:
-            tasks_obj = run_json_step(
-                "tasks", compose_prompt(pack["02_tasks_prompt.txt"])
-            )
-        except ValueError as tasks_error:
-            logger.warning(
-                "few-shot tasks step failed (%s); falling back to empty tasks list",
-                tasks_error,
-            )
-            tasks_obj = {"tasks": []}
-        partials["tasks"] = tasks_obj
-
-        try:
-            gateways_obj = run_json_step(
-                "gateways", compose_prompt(pack["03_gateways_prompt.txt"])
-            )
-        except ValueError as gateways_error:
-            logger.warning(
-                "few-shot gateways step failed (%s); falling back to empty gateways list",
-                gateways_error,
-            )
-            gateways_obj = {"gateways": []}
-        partials["gateways"] = gateways_obj
-
-        try:
-            end_obj = run_json_step(
-                "end_event", compose_prompt(pack["05_end_event_prompt.txt"])
-            )
-        except ValueError as end_error:
-            logger.warning(
-                "few-shot end_event step failed (%s); falling back to default end event",
-                end_error,
-            )
-            end_obj = {
-                "events": [
-                    {
-                        "id": "endEvent1",
-                        "type": "endEvent",
-                        "name": "End",
-                    }
-                ]
-            }
-        partials["end"] = end_obj
-
-        known_elements = self._merge_known_elements(
-            [start_obj, tasks_obj, gateways_obj, end_obj]
-        )
-        try:
-            flows_obj = run_json_step(
-                "flows",
-                compose_prompt(
-                    pack["04_flows_prompt.txt"], known_elements=known_elements
-                ),
-            )
-        except ValueError as flows_error:
-            logger.warning(
-                "few-shot flows step failed (%s); falling back to empty flows list",
-                flows_error,
-            )
-            flows_obj = {"flows": []}
-        partials["flows"] = flows_obj
-
-        merge_input = {
-            "events": known_elements.get("events", []),
-            "tasks": known_elements.get("tasks", []),
-            "gateways": known_elements.get("gateways", []),
-            "flows": flows_obj.get("flows", []),
-            "partials": partials,
-        }
-        try:
-            merged_obj = run_json_step(
-                "merge_and_validate",
-                compose_prompt(
-                    pack["06_merge_and_validate_prompt.txt"],
-                    partial_outputs=merge_input,
-                ),
-            )
-        except ValueError as merge_error:
-            logger.warning(
-                "few-shot merge step failed (%s); falling back to deterministic local merge",
-                merge_error,
-            )
-            merged_obj = {
-                "events": list(known_elements.get("events", [])),
-                "tasks": list(known_elements.get("tasks", [])),
-                "gateways": list(known_elements.get("gateways", [])),
-                "flows": list(flows_obj.get("flows", [])),
-            }
-
-        sanitized = self.model_validator.sanitize_model(merged_obj)
-        issues = self.model_validator.validate_model(sanitized, user_text)
-
-        if issues:
-            logger.warning(
-                "few-shot validation found %d issue(s), running repair pass",
-                len(issues),
-            )
-            repair_prompt = self._build_repair_prompt(user_text, sanitized, issues)
-            try:
-                repaired_obj = run_json_step("repair", repair_prompt)
-                sanitized = self.model_validator.sanitize_model(repaired_obj)
-                remaining_issues = self.model_validator.validate_model(
-                    sanitized, user_text
-                )
-                if remaining_issues:
-                    raise ValueError(
-                        "Few-shot repair produced invalid model: "
-                        + "; ".join(remaining_issues)
-                    )
-            except ValueError as repair_error:
-                logger.warning(
-                    "few-shot repair step failed (%s); returning pre-repair sanitized model",
-                    repair_error,
-                )
-
-        return json.dumps(sanitized, ensure_ascii=False)
-
-    @staticmethod
-    def _openai_generate_once(client, system_prompt, model, prompt):
-        model_name = (model or "").lower()
-        request_kwargs = {
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            "model": model,
-            "max_completion_tokens": 4096,
-        }
-        # GPT-5 variants can reject explicit temperature values and only accept
-        # provider defaults. Avoid first-attempt 400s by omitting it up front.
-        if not model_name.startswith("gpt-5"):
-            request_kwargs["temperature"] = 0
-        try:
-            chat_completion = client.chat.completions.create(**request_kwargs)
-        except Exception as e:
-            # Some OpenAI models (for example GPT-5 variants) only accept the
-            # default temperature and reject an explicit value.
-            error_text = str(e).lower()
-            if "temperature" in error_text and "unsupported" in error_text:
-                logger.info(
-                    "Retrying OpenAI call without explicit temperature (model=%s)",
-                    model,
-                )
-                request_kwargs.pop("temperature", None)
-                chat_completion = client.chat.completions.create(**request_kwargs)
-            else:
-                raise
-
-        first_choice = chat_completion.choices[0] if chat_completion.choices else None
-        message = getattr(first_choice, "message", None)
-        content = LLMService._extract_openai_message_text(message)
-
-        finish_reason = getattr(first_choice, "finish_reason", None)
-        refusal = getattr(message, "refusal", None)
-        usage = getattr(chat_completion, "usage", None)
-        prompt_tokens = getattr(usage, "prompt_tokens", None)
-        completion_tokens = getattr(usage, "completion_tokens", None)
-
-        logger.debug(
-            "OpenAI completion metadata (model=%s, finish_reason=%s, prompt_tokens=%s, completion_tokens=%s, content_len=%d)",
-            getattr(chat_completion, "model", model),
-            finish_reason,
-            prompt_tokens,
-            completion_tokens,
-            len(content),
-        )
-        if not content:
-            logger.warning(
-                "OpenAI returned empty message content (model=%s, finish_reason=%s, refusal=%r)",
-                getattr(chat_completion, "model", model),
-                finish_reason,
-                refusal,
-            )
-            raise EmptyResponseError("OpenAI returned empty message content.")
-        return content
-
-    @staticmethod
-    def _gemini_generate_once(gen_model, prompt):
-        response = gen_model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
-                temperature=0.0, top_k=1, top_p=1.0, max_output_tokens=2048
-            ),
-        )
-        text = ((response.text or "") if hasattr(response, "text") else "").strip()
-        if not text:
-            raise EmptyResponseError("Gemini returned empty response text.")
-        return text
-
-    def call_openai(
-        self, api_key, system_prompt, user_text, prompting_strategy, model="gpt-4o"
+    def _prepare(
+        self,
+        provider,
+        prompting_strategy,
+        user_text,
+        model,
+        feedback=None,
+        previous_model=None,
     ):
-        """Call OpenAI GPT model.
+        """Build the prompt and emit the shared pre-call logging.
 
-        ``model`` defaults to ``gpt-4o`` so existing (v1) callers and tests keep
-        working; the v2 ``/generate`` flow passes the model selected from the
-        registry.
+        Returns ``(prompt, start_time)``. Factored out so both provider methods
+        share identical input handling, logging and timing.
+
+        ``feedback`` carries the validation problems from a rejected previous
+        attempt and ``previous_model`` the rejected model itself. They are
+        appended to the description so the regeneration applies the specific
+        fixes to that exact model instead of generating a fresh structure that
+        diverges and reintroduces other errors.
         """
         if not user_text:
-            logger.warning("call_openai: empty user_text provided")
+            logger.warning("%s: empty user_text provided", provider)
         start_time = time.time()
+        if feedback:
+            correction = (
+                "The previous attempt was rejected for these workflow-net "
+                f"problems:\n{feedback}\n"
+            )
+            if previous_model:
+                correction += (
+                    "Here is the exact model you returned previously:\n"
+                    f"{previous_model}\n"
+                    "Return that SAME model with ONLY the fixes above applied: add "
+                    "the named gateways and re-route the listed flows. Change "
+                    "nothing else - keep every other node id, name and flow "
+                    "identical, do not rename tasks, and do not restructure "
+                    "branches that were not flagged.\n"
+                )
+            else:
+                correction += (
+                    "Apply each instruction exactly: add the named gateways and "
+                    "re-route the listed flows.\n"
+                )
+            correction += (
+                "Control flow must never split or join directly on a task or "
+                "event - only a gateway may have more than one incoming or "
+                "outgoing flow."
+            )
+            user_text = f"{user_text}\n\n{correction}"
         prompt = self.prompt_builder.build_prompt(prompting_strategy, user_text)
         logger.debug(
-            "call_openai: strategy=%s, model=%s, user_text_len=%d, prompt_len=%d",
+            "%s: strategy=%s, model=%s, user_text_len=%d, prompt_len=%d",
+            provider,
             prompting_strategy,
             model,
             len(user_text or ""),
             len(prompt or ""),
         )
+        return prompt, start_time
 
-        openai_base_url = self._config_value("OPENAI_BASE_URL")
-        client_kwargs = {"api_key": api_key}
-        if openai_base_url:
-            client_kwargs["base_url"] = openai_base_url
-            logger.info("Using configured OpenAI base URL")
-        client = OpenAI(**client_kwargs)
+    def _finish(self, provider, text, start_time):
+        """Normalise a successful response and log its timing.
+
+        Single source for the ``or ""`` + ``strip()`` and the duration log,
+        shared by both provider methods.
+        """
+        text = (text or "").strip()
+        logger.info(
+            "%s response received in %.3fs (len=%d)",
+            provider,
+            time.time() - start_time,
+            len(text),
+        )
+        return text
+
+    def _record_usage(
+        self,
+        provider,
+        model,
+        usage_out,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+        cached_tokens=0,
+    ):
+        """Emit a successful call's token usage and accumulate it for the caller.
+
+        Provider-agnostic: each call site reads the counts from that provider's
+        own usage object and passes them in. No-op unless token logging is
+        enabled (see ``_token_logging_enabled``), so production stays quiet. The
+        per-call cost is estimated from the registry's pricing and appended to
+        the log line (omitted when the model is unpriced). When an ``usage_out``
+        list is supplied the counts and cost are also appended to it, so the
+        retry loop can total tokens and cost across all attempts of a request.
+        """
+        if not _token_logging_enabled():
+            return
+        # Actual cost (cached tokens billed at the reduced rate) and the
+        # hypothetical no-cache cost, so the log can show the saving side by side.
+        cost = model_registry.estimate_cost(
+            provider, model, prompt_tokens, completion_tokens, cached_tokens
+        )
+        cost_full = model_registry.estimate_cost(
+            provider, model, prompt_tokens, completion_tokens, 0
+        )
+        # ``prompt_tokens`` is the *total* input reported by the provider and
+        # already includes the cached portion; ``cached`` is shown alongside so
+        # the cache hit (e.g. the shared prefix reused on a retry) is visible.
+        cached = cached_tokens if model_registry._is_count(cached_tokens) else 0
+        cost_str = log_utils.format_cost(cost, cost_full, cached)
+        logger.info(
+            "%s token usage (model=%s): input=%s (cached=%s) output=%s total=%s%s",
+            provider,
+            model,
+            prompt_tokens,
+            cached,
+            completion_tokens,
+            log_utils.emphasize(total_tokens, log_utils.BOLD, log_utils.CYAN),
+            f" {cost_str}" if cost_str else "",
+        )
+        if usage_out is not None:
+            usage_out.append(
+                {
+                    "prompt": prompt_tokens or 0,
+                    "cached": cached,
+                    "completion": completion_tokens or 0,
+                    "total": total_tokens or 0,
+                    "cost": cost,
+                    "cost_full": cost_full,
+                }
+            )
+
+    def _fail(self, provider, exc):
+        """Log the traceback and build a ProviderError for the failed call.
+
+        Call sites raise the returned error with ``from exc`` to keep the cause
+        chain intact.
+        """
+        logger.exception("%s call failed: %s", provider, exc)
+        return ProviderError(str(exc), _upstream_status(exc))
+
+    def call_openai(
+        self,
+        api_key,
+        system_prompt,
+        user_text,
+        prompting_strategy,
+        model="gpt-5.4-mini",
+        temperature=0.0,
+        feedback=None,
+        previous_model=None,
+        usage_out=None,
+    ):
+        """Call an OpenAI model via the Responses API with Structured Outputs.
+
+        Uses ``client.responses.parse`` — the interface OpenAI now recommends
+        for new projects — rather than the legacy Chat Completions endpoint, and
+        passes ``text_format=ProcessModel`` so the model is constrained to the
+        BPMN-JSON schema (a strict JSON schema is compiled from the Pydantic
+        model). This guarantees valid JSON and the exact element/flow ``type``
+        values, replacing the prompt's hand-written "only return JSON" rules.
+
+        The Responses API unifies the output-token parameter as
+        ``max_output_tokens`` for every model, so the only model-dependent knob
+        left is ``temperature``: GPT-5.x / o-series reasoning models reject it,
+        while ``gpt-4o`` accepts it. That capability comes from the registry
+        instead of a name heuristic.
+
+        ``temperature`` defaults to ``0.0`` (deterministic). The retry loop
+        passes a small non-zero value on regeneration so a failed attempt is
+        not reproduced verbatim; it is only applied when the model accepts it.
+
+        Returns ``response.output_text`` — the raw JSON string — so the calling
+        service keeps receiving a string it can hand on unchanged.
+
+        ``model`` defaults to ``gpt-5.4-mini`` — the registry's recommended
+        default — for direct (v1) callers and tests; the v2 ``/generate`` flow
+        passes the model selected from the registry.
+        """
+        prompt, start_time = self._prepare(
+            "openai", prompting_strategy, user_text, model, feedback, previous_model
+        )
+        client = OpenAI(api_key=api_key)
+
+        request_params = {
+            "model": model,
+            "instructions": system_prompt,
+            "input": prompt,
+            "max_output_tokens": _MAX_OUTPUT_TOKENS,
+            "text_format": ProcessModel,
+        }
+        if model_registry.supports_temperature("openai", model):
+            request_params["temperature"] = temperature
 
         try:
-            if prompting_strategy == "few_shot":
-                try:
-                    logger.info("Running OpenAI few-shot multi-call orchestration")
-                    return self._run_few_shot_orchestration(
-                        user_text,
-                        lambda prompt: self._openai_generate_once(
-                            client, system_prompt, model, prompt
-                        ),
-                    )
-                except Exception as orchestration_error:
-                    logger.warning(
-                        "Few-shot orchestration failed: %s", orchestration_error
-                    )
-                    raise
-
-            logger.info("Calling OpenAI chat.completions (model=%s)", model)
-            if prompting_strategy == "zero_shot":
-                prompt_preview = (prompt or "")[:240].replace("\n", "\\n")
-                logger.debug(
-                    "OpenAI zero-shot prompt preview (len=%d): %s",
-                    len(prompt or ""),
-                    prompt_preview,
-                )
-            content = self._openai_generate_once(client, system_prompt, model, prompt)
-            duration = time.time() - start_time
-            logger.info(
-                "OpenAI response received in %.3fs (len=%d)",
-                duration,
-                len(content),
-            )
-            model_name = (model or "").lower()
-            if (
-                prompting_strategy == "zero_shot"
-                and model_name.startswith("gpt-5")
-                and not self._has_json_object(content)
-            ):
-                preview = (content or "")[:120].replace("\n", "\\n")
-                logger.warning(
-                    "OpenAI zero-shot produced non-JSON output for GPT-5 (len=%d, preview=%r); retrying with strict JSON reminder",
-                    len(content),
-                    preview,
-                )
-                retry_prompt = (
-                    f"{prompt}\n\n"
-                    f"{STRICT_JSON_REMINDER}\n"
-                    "Return exactly one JSON object."
-                )
-                content = self._openai_generate_once(
-                    client,
-                    system_prompt,
-                    model,
-                    retry_prompt,
-                )
-                logger.info(
-                    "OpenAI zero-shot retry received (len=%d, has_json=%s)",
-                    len(content),
-                    self._has_json_object(content),
-                )
-            if prompting_strategy == "zero_shot" and not content:
-                logger.warning(
-                    "OpenAI zero-shot returned empty content (model=%s, user_text_len=%d)",
-                    model,
-                    len(user_text or ""),
-                )
-                raise EmptyResponseError("OpenAI zero-shot returned empty content.")
-            return content.strip()
+            logger.info("Calling OpenAI responses.parse (model=%s)", model)
+            response = client.responses.parse(**request_params)
         except Exception as e:
-            logger.exception("OpenAI call failed: %s", e)
-            raise
+            raise self._fail("openai", e) from e
+
+        # A truncated (max_output_tokens) or content-filtered response comes back
+        # with status "incomplete" and partial/empty output. Returning that
+        # partial text would hand broken JSON to the caller, so fail explicitly.
+        if getattr(response, "status", None) == "incomplete":
+            reason = getattr(
+                getattr(response, "incomplete_details", None), "reason", None
+            )
+            raise ProviderError(
+                f"OpenAI returned an incomplete response (reason={reason}); the "
+                f"model likely hit max_output_tokens={_MAX_OUTPUT_TOKENS}."
+            )
+
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            cached = getattr(
+                getattr(usage, "input_tokens_details", None), "cached_tokens", 0
+            )
+            self._record_usage(
+                "openai",
+                model,
+                usage_out,
+                getattr(usage, "input_tokens", None),
+                getattr(usage, "output_tokens", None),
+                getattr(usage, "total_tokens", None),
+                cached,
+            )
+        return self._finish("openai", response.output_text, start_time)
 
     def call_gemini(
         self,
@@ -519,66 +300,106 @@ class LLMService:
         system_prompt,
         user_text,
         prompting_strategy,
-        model=None,
+        model="gemini-3.5-flash",
+        temperature=0.0,
+        feedback=None,
+        previous_model=None,
+        usage_out=None,
     ):
-        """Call Google Gemini model.
+        """Call a Google Gemini model via the unified ``google-genai`` SDK.
 
-        ``model`` is required; callers must pass the model from the request body
-        or the registry default.  None is rejected immediately.
+        Uses a per-call ``genai.Client(api_key=...)`` instead of the deprecated
+        ``google-generativeai`` SDK's global ``genai.configure(...)``. The old
+        global configuration was process-wide mutable state: under concurrent
+        requests carrying different API keys it was a race condition. A
+        per-request client isolates each call's credentials.
+
+        Enforces structured output via ``response_mime_type="application/json"``
+        plus ``response_schema=ProcessModel`` — the same Pydantic schema the
+        OpenAI path uses — so Gemini is constrained to the BPMN-JSON shape and
+        ``type`` values instead of relying on the prompt's hand-written rules.
+        ``response.text`` is still the raw JSON string the caller hands on.
+
+        ``temperature`` defaults to ``0.0``; the retry loop passes a small
+        non-zero value on regeneration. At ``0.0`` we also pin ``top_k=1`` /
+        ``top_p=1.0`` for fully greedy, deterministic decoding. When a non-zero
+        temperature is requested those are left at the model defaults — pinning
+        ``top_k=1`` would force greedy selection regardless of temperature, so
+        keeping them would make the retry's temperature bump a no-op.
+
+        ``model`` defaults to ``gemini-3.5-flash`` (the current standard flash
+        tier); the v2 ``/generate`` flow passes the model selected from the
+        registry.
         """
-        if not model:
-            raise ValueError("call_gemini: model must be specified")
-        if not user_text:
-            logger.warning("call_gemini: empty user_text provided")
-        start_time = time.time()
-        prompt = self.prompt_builder.build_prompt(prompting_strategy, user_text)
-        logger.debug(
-            "call_gemini: strategy=%s, model=%s, user_text_len=%d, prompt_len=%d",
-            prompting_strategy,
-            model,
-            len(user_text or ""),
-            len(prompt or ""),
+        prompt, start_time = self._prepare(
+            "gemini", prompting_strategy, user_text, model, feedback, previous_model
         )
+        client = genai.Client(api_key=api_key)
 
-        gemini_api_endpoint = self._config_value("GEMINI_API_ENDPOINT")
-        genai_kwargs = {"api_key": api_key}
-        if gemini_api_endpoint:
-            genai_kwargs["client_options"] = {"api_endpoint": gemini_api_endpoint}
-            logger.info("Using configured Gemini API endpoint")
-        genai.configure(**genai_kwargs)
+        # Gemini nests the generation settings in a `config` object — the only
+        # structural difference from OpenAI's flat request params.
+        config = {
+            "system_instruction": system_prompt,
+            "max_output_tokens": _MAX_OUTPUT_TOKENS,
+            "response_mime_type": "application/json",
+            "response_schema": ProcessModel,
+        }
+        if model_registry.supports_temperature("gemini", model):
+            config["temperature"] = temperature
+            if temperature == 0.0:
+                # Greedy decoding for a deterministic first attempt. Omitted on
+                # retries so the temperature bump can actually vary the output.
+                config["top_k"] = 1
+                config["top_p"] = 1.0
 
-        gen_model = genai.GenerativeModel(
-            model_name=model, system_instruction=system_prompt
-        )
+        request_params = {
+            "model": model,
+            "contents": prompt,
+            "config": genai.types.GenerateContentConfig(**config),
+        }
 
         try:
-            if prompting_strategy == "few_shot":
-                try:
-                    logger.info("Running Gemini few-shot multi-call orchestration")
-                    return self._run_few_shot_orchestration(
-                        user_text,
-                        lambda step_prompt: self._gemini_generate_once(
-                            gen_model, step_prompt
-                        ),
-                    )
-                except Exception as orchestration_error:
-                    logger.warning(
-                        "Few-shot orchestration failed: %s", orchestration_error
-                    )
-                    raise
-
             logger.info("Calling Gemini generate_content (model=%s)", model)
-            text = self._gemini_generate_once(gen_model, prompt)
-            duration = time.time() - start_time
-            logger.info(
-                "Gemini response received in %.3fs (len=%d)",
-                duration,
-                len(text),
-            )
-            return text.strip()
+            response = client.models.generate_content(**request_params)
         except Exception as e:
-            logger.exception("Gemini call failed: %s", e)
-            raise
+            raise self._fail("gemini", e) from e
+
+        # Anything other than a clean STOP (e.g. MAX_TOKENS truncation or a
+        # SAFETY block) means the JSON is partial or absent; reading
+        # ``response.text`` would yield broken/empty output, so fail explicitly.
+        # Compared by name so a non-STOP reason surfaces regardless of SDK enum.
+        candidate = response.candidates[0] if response.candidates else None
+        finish = getattr(getattr(candidate, "finish_reason", None), "name", None)
+        if finish is not None and finish not in ("STOP", "FINISH_REASON_UNSPECIFIED"):
+            raise ProviderError(
+                f"Gemini did not finish cleanly (finish_reason={finish}); output "
+                f"may exceed max_output_tokens={_MAX_OUTPUT_TOKENS} or was blocked."
+            )
+
+        usage = getattr(response, "usage_metadata", None)
+        if usage is not None:
+            cached = getattr(usage, "cached_content_token_count", 0)
+            # Gemini bills thinking tokens at the output rate, but they are NOT
+            # included in ``candidates_token_count`` — so add them to get the true
+            # billable output. (OpenAI, by contrast, already folds reasoning
+            # tokens into ``output_tokens``.)
+            candidates = getattr(usage, "candidates_token_count", None)
+            thoughts = getattr(usage, "thoughts_token_count", None)
+            output = candidates
+            if model_registry._is_count(candidates) and model_registry._is_count(
+                thoughts
+            ):
+                output = candidates + thoughts
+            self._record_usage(
+                "gemini",
+                model,
+                usage_out,
+                getattr(usage, "prompt_token_count", None),
+                output,
+                getattr(usage, "total_token_count", None),
+                cached,
+            )
+        return self._finish("gemini", response.text, start_time)
 
     def generate(
         self,
@@ -587,7 +408,11 @@ class LLMService:
         model,
         user_text,
         system_prompt,
-        prompting_strategy="zero_shot",
+        prompting_strategy="few_shot",
+        temperature=0.0,
+        feedback=None,
+        previous_model=None,
+        usage_out=None,
     ):
         """Provider-agnostic entry point used by the v2 ``/generate`` route.
 
@@ -595,6 +420,11 @@ class LLMService:
         it with the registry-selected ``model``. Raises ``ValueError`` if the
         provider has no dispatch mapping (the route validates the pair against
         the registry first, so this is a defensive guard).
+
+        ``temperature`` is forwarded to the provider call; the retry loop raises
+        it above ``0.0`` on regeneration so a rejected attempt is not produced
+        verbatim again. ``feedback`` is likewise forwarded so the regeneration
+        sees the previous attempt's validation problems.
         """
         method_name = model_registry.dispatch_method(provider)
         if method_name is None:
@@ -606,4 +436,8 @@ class LLMService:
             user_text=user_text,
             prompting_strategy=prompting_strategy,
             model=model,
+            temperature=temperature,
+            feedback=feedback,
+            previous_model=previous_model,
+            usage_out=usage_out,
         )

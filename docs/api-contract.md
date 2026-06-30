@@ -1,8 +1,8 @@
 # LLM API Connector — Internal API
 
 Internal HTTP API consumed by t2p-2.0. The machine-readable form of this
-contract is the generated OpenAPI spec at `/openapi.json` (Flasgger). A
-compatibility alias `/openapi.yaml` serves the same specification in YAML format.
+contract is [`docs/openapi.yaml`](openapi.yaml); this document is authoritative
+where the two disagree.
 
 This connector is **internal — called solely by t2p-2.0** — and is the
 **authoritative validator** for the generate contract. It owns all request
@@ -25,36 +25,64 @@ responses below (including 4xx) unchanged.
 ```
 Header: Authorization: Bearer <api_key>
 Body: {
-  "user_text": string  (required)
-  "provider":  string  (required)
-  "model":     string  (required)
-  "prompting_strategy": string  (optional: "zero_shot" | "few_shot", default: "zero_shot")
+  "user_text":          string  (required)
+  "provider":           string  (required)
+  "model":              string  (required)
+  "prompting_strategy": string  (optional, "few_shot" | "zero_shot"; default "few_shot")
 }
 Response 200: { "raw_response": string }
-Response 400: { "error": { "code": string, "message": string } }
-Response 401: { "error": { "code": string, "message": string } }
-Response 500: { "error": { "code": string, "message": string } }
+Response 400: { "error": { "code": string, "message": string, "request_id": string } }
+Response 401: { "error": { "code": string, "message": string, "request_id": string } }
+Response 422: { "error": { "code": string, "message": string, "request_id": string, "details": [string] } }
+Response 429: { "error": { "code": string, "message": string, "request_id": string } }
+Response 502: { "error": { "code": string, "message": string, "request_id": string } }
+Response 500: { "error": { "code": string, "message": string, "request_id": string } }
 ```
 
 The provider API key is supplied in the `Authorization` header. The connector builds the
-prompt, dispatches the call to the selected `provider`/`model`, and returns the raw
-provider response.
+prompt, dispatches the call to the selected `provider`/`model`, validates the generated
+model against its own validators, and returns the raw provider response. If validation
+fails, the connector retries (up to 3 attempts total, raising the temperature on retries);
+if every attempt still fails validation it returns `422 model_unprocessable`. This is a
+client-actionable condition (the provider answered, but the description could not be turned
+into a sound workflow net — rephrase or simplify), not an upstream failure, hence 4xx not
+5xx. The `message` is a friendly, user-facing summary; the `details` array carries the last
+attempt's concrete validation problems for diagnostics (these are repair-oriented and meant
+for logs/developers, not for direct display to end users).
 
-For supported providers, the connector accepts any submitted `model` string and lets the
-provider validate whether that model is actually available for the supplied API key.
+## Error reference
 
-Error codes: `invalid_request`, `invalid_provider` (400); `unauthorized` (401);
-`upstream_error`, `internal_error` (500). A missing or malformed `Authorization`
-header returns `401 unauthorized`; a non-JSON body or a missing/empty required
-field returns `400 invalid_request`.
+Every error response uses the body `{ "error": { "code", "message", "request_id", "details"? } }`.
+`code` is the stable identifier to branch on; `message` is human-readable; `request_id`
+(string) is always present and correlates the response with the server logs; `details`
+(array of strings) appears only where noted. t2p-2.0 relays the 4xx rows verbatim
+(status + body) and maps the 5xx rows to its own `upstream_error`/`internal_error`.
+
+| HTTP | `code` | Meaning | How to fix |
+|------|--------|---------|------------|
+| 400 | `invalid_request` | Body is not JSON, or a required field (`user_text` / `provider` / `model`) is missing or empty. | Send a JSON body with all three required fields populated. |
+| 400 | `invalid_provider` | The `provider`/`model` pair is not in the registry. | Pick a pair returned by `GET /models`. |
+| 401 | `unauthorized` | `Authorization` header missing or not a well-formed `Bearer <key>`. | Send `Authorization: Bearer <api_key>`. |
+| 422 | `model_unprocessable` | The provider answered, but no attempt (3 total) produced a valid workflow net. `details` lists the concrete validation problems. | Rephrase or simplify the description — avoid splits/joins without a clear gateway, more than one ending, or "cancel at any point". Not retryable unchanged. |
+| 429 | `upstream_error` | The provider rate-limited the call; `message` carries the provider's text. | Back off and retry. |
+| 502 | `upstream_error` | The provider failed or returned an unusable/incomplete response; `message` carries the provider's text. | Transient upstream failure — retry later. |
+| 500 | `internal_error` | Unexpected connector fault. | Not caller-fixable; inspect connector logs / report. |
+
+`GET /models` returns `200`, or `500 internal_error` on an unexpected failure.
 
 ## `GET /models`
 
 ```
-Response 200: { "models": [{ "provider": string, "model": string }] }
+Response 200: {
+  "models": [{
+    "provider": string,
+    "model": string,
+    "supports_temperature": boolean,
+    "pricing": { "input": number, "output": number, "cached_input"?: number }
+  }]
+}
 ```
 
-`GET /models` performs best-effort provider-backed model discovery. If an
-`Authorization: Bearer <api_key>` header is supplied, the connector may use that key for
-discovery; otherwise it uses configured provider environment variables when available and
-falls back to a small built-in model list if discovery is unavailable.
+`pricing` is USD per 1,000,000 tokens. `cached_input` appears only for models
+that offer a reduced cached-input rate. `supports_temperature` is `false` for
+reasoning models (GPT-5.x / o-series) that reject the `temperature` parameter.

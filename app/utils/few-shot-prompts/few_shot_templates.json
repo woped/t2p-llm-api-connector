@@ -23,29 +23,33 @@
         { "id": "gateway1", "type": "parallelGateway", "name": "Start Parallel Checks" },
         { "id": "gateway2", "type": "parallelGateway", "name": "Join Parallel Checks" },
         { "id": "gateway3", "type": "exclusiveGateway", "name": "Is Form Complete?" },
-        { "id": "gateway4", "type": "exclusiveGateway", "name": "Approval Decision" }
+        { "id": "gateway4", "type": "exclusiveGateway", "name": "Approval Decision" },
+        { "id": "gateway5", "type": "exclusiveGateway", "name": "Resume Verification" },
+        { "id": "gateway6", "type": "exclusiveGateway", "name": "Merge Outcome" }
       ],
       "flows": [
         { "id": "flow1", "type": "sequenceFlow", "source": "startEvent1", "target": "task1" },
         { "id": "flow2", "type": "sequenceFlow", "source": "task1", "target": "gateway1" },
         { "id": "flow3", "type": "sequenceFlow", "source": "gateway1", "target": "task2" },
-        { "id": "flow4", "type": "sequenceFlow", "source": "gateway1", "target": "task3" },
+        { "id": "flow4", "type": "sequenceFlow", "source": "gateway1", "target": "gateway5" },
         { "id": "flow5", "type": "sequenceFlow", "source": "gateway1", "target": "task4" },
-        { "id": "flow6", "type": "sequenceFlow", "source": "task3", "target": "gateway3" },
-        { "id": "flow7", "type": "sequenceFlow", "source": "gateway3", "target": "task5" },
-        { "id": "flow8", "type": "sequenceFlow", "source": "task5", "target": "task6" },
-        { "id": "flow9", "type": "sequenceFlow", "source": "task6", "target": "task3" },
-        { "id": "flow10", "type": "sequenceFlow", "source": "gateway3", "target": "gateway2" },
-        { "id": "flow11", "type": "sequenceFlow", "source": "task2", "target": "gateway2" },
-        { "id": "flow12", "type": "sequenceFlow", "source": "task4", "target": "gateway2" },
-        { "id": "flow13", "type": "sequenceFlow", "source": "gateway2", "target": "task7" },
-        { "id": "flow14", "type": "sequenceFlow", "source": "task7", "target": "gateway4" },
-        { "id": "flow15", "type": "sequenceFlow", "source": "gateway4", "target": "task8" },
-        { "id": "flow16", "type": "sequenceFlow", "source": "gateway4", "target": "task9" },
-        { "id": "flow17", "type": "sequenceFlow", "source": "task8", "target": "task10" },
-        { "id": "flow18", "type": "sequenceFlow", "source": "task9", "target": "task11" },
-        { "id": "flow19", "type": "sequenceFlow", "source": "task10", "target": "endEvent1" },
-        { "id": "flow20", "type": "sequenceFlow", "source": "task11", "target": "endEvent1" }
+        { "id": "flow6", "type": "sequenceFlow", "source": "gateway5", "target": "task3" },
+        { "id": "flow7", "type": "sequenceFlow", "source": "task3", "target": "gateway3" },
+        { "id": "flow8", "type": "sequenceFlow", "source": "gateway3", "target": "task5" },
+        { "id": "flow9", "type": "sequenceFlow", "source": "task5", "target": "task6" },
+        { "id": "flow10", "type": "sequenceFlow", "source": "task6", "target": "gateway5" },
+        { "id": "flow11", "type": "sequenceFlow", "source": "gateway3", "target": "gateway2" },
+        { "id": "flow12", "type": "sequenceFlow", "source": "task2", "target": "gateway2" },
+        { "id": "flow13", "type": "sequenceFlow", "source": "task4", "target": "gateway2" },
+        { "id": "flow14", "type": "sequenceFlow", "source": "gateway2", "target": "task7" },
+        { "id": "flow15", "type": "sequenceFlow", "source": "task7", "target": "gateway4" },
+        { "id": "flow16", "type": "sequenceFlow", "source": "gateway4", "target": "task8" },
+        { "id": "flow17", "type": "sequenceFlow", "source": "gateway4", "target": "task9" },
+        { "id": "flow18", "type": "sequenceFlow", "source": "task8", "target": "task10" },
+        { "id": "flow19", "type": "sequenceFlow", "source": "task9", "target": "task11" },
+        { "id": "flow20", "type": "sequenceFlow", "source": "task10", "target": "gateway6" },
+        { "id": "flow21", "type": "sequenceFlow", "source": "task11", "target": "gateway6" },
+        { "id": "flow22", "type": "sequenceFlow", "source": "gateway6", "target": "endEvent1" }
       ]
     }
   },
@@ -73,10 +77,11 @@
     }
   },
   {
-    "description": "Example: TwoTrafficLightsSafeFair: The system models the behavior of two traffic lights that alternate safely to ensure fairness.\nInitially, the first light is red and the second is green.\n\nWhen the green light of the second traffic light turns yellow and then red, it becomes safe for the first light to begin its transition.\nThe first traffic light changes from red to yellow and then to green, while the second light remains red.\n\nThis alternation continues to ensure that both directions have equal access to go, while never being green at the same time.\n\nThe 'safe1' and 'safe2' places act as synchronization points that enforce mutual exclusion — ensuring that only one light can be green at a time.\n\nThe process loops indefinitely to simulate real-world traffic control.",
+    "description": "Example: TwoTrafficLightsSafeFair: The system models two traffic lights that alternate safely to ensure fairness.\nInitially, the first light is red and the second is green.\n\nWhen the green light of the second traffic light turns yellow and then red, it becomes safe for the first light to begin its transition.\nThe first traffic light changes from red to yellow and then to green, while the second light remains red.\n\nThis alternation ensures that both directions get equal access to go, while the two lights are never green at the same time, enforcing mutual exclusion.\n\nAfter each full cycle the controller decides whether to keep running: it either starts the next cycle or shuts the traffic control down.",
     "bpmn": {
       "events": [
-        { "id": "startEvent1", "type": "startEvent", "name": "Start Traffic Loop" }
+        { "id": "startEvent1", "type": "startEvent", "name": "Start Traffic Loop" },
+        { "id": "endEvent1", "type": "endEvent", "name": "Traffic Control Stopped" }
       ],
       "tasks": [
         { "id": "task1", "type": "serviceTask", "name": "Switch Light 2 from Green to Yellow" },
@@ -89,40 +94,58 @@
         { "id": "task8", "type": "serviceTask", "name": "Switch Light 2 from Yellow to Green" }
       ],
       "gateways": [
-        { "id": "gateway1", "type": "exclusiveGateway", "name": "Safe to Switch?" }
+        { "id": "gateway1", "type": "exclusiveGateway", "name": "Continue Cycle?" },
+        { "id": "gateway2", "type": "exclusiveGateway", "name": "Resume Cycle" }
       ],
       "flows": [
-        { "id": "flow1", "type": "sequenceFlow", "source": "startEvent1", "target": "task1" },
-        { "id": "flow2", "type": "sequenceFlow", "source": "task1", "target": "task2" },
-        { "id": "flow3", "type": "sequenceFlow", "source": "task2", "target": "task3" },
-        { "id": "flow4", "type": "sequenceFlow", "source": "task3", "target": "task4" },
-        { "id": "flow5", "type": "sequenceFlow", "source": "task4", "target": "task5" },
-        { "id": "flow6", "type": "sequenceFlow", "source": "task5", "target": "task6" },
-        { "id": "flow7", "type": "sequenceFlow", "source": "task6", "target": "task7" },
-        { "id": "flow8", "type": "sequenceFlow", "source": "task7", "target": "task8" },
-        { "id": "flow9", "type": "sequenceFlow", "source": "task8", "target": "gateway1" },
-        { "id": "flow10", "type": "sequenceFlow", "source": "gateway1", "target": "task1" }
+        { "id": "flow1", "type": "sequenceFlow", "source": "startEvent1", "target": "gateway2" },
+        { "id": "flow2", "type": "sequenceFlow", "source": "gateway2", "target": "task1" },
+        { "id": "flow3", "type": "sequenceFlow", "source": "task1", "target": "task2" },
+        { "id": "flow4", "type": "sequenceFlow", "source": "task2", "target": "task3" },
+        { "id": "flow5", "type": "sequenceFlow", "source": "task3", "target": "task4" },
+        { "id": "flow6", "type": "sequenceFlow", "source": "task4", "target": "task5" },
+        { "id": "flow7", "type": "sequenceFlow", "source": "task5", "target": "task6" },
+        { "id": "flow8", "type": "sequenceFlow", "source": "task6", "target": "task7" },
+        { "id": "flow9", "type": "sequenceFlow", "source": "task7", "target": "task8" },
+        { "id": "flow10", "type": "sequenceFlow", "source": "task8", "target": "gateway1" },
+        { "id": "flow11", "type": "sequenceFlow", "source": "gateway1", "target": "gateway2" },
+        { "id": "flow12", "type": "sequenceFlow", "source": "gateway1", "target": "endEvent1" }
       ]
     }
   },
   {
-    "description": "A cashier scanning items, telling the total amount, and receiving cash payment.",
+    "description": "OrderFulfillment: An online shop receives a customer order.\nThe warehouse first checks whether the ordered item is in stock.\nIf the item is not in stock, it is restocked before fulfillment continues; if it is already in stock, fulfillment continues directly.\nOnce stock is ready, the order is fulfilled in parallel: the items are packed and, at the same time, an invoice is generated.\nAfter both the packing and the invoicing are finished, the order is shipped to the customer and the process ends.",
     "bpmn": {
       "events": [
-        { "id": "startEvent1", "type": "startEvent", "name": "Customer Arrives" },
-        { "id": "endEvent1", "type": "endEvent", "name": "Transaction Completed" }
+        { "id": "startEvent1", "type": "startEvent", "name": "Order Received" },
+        { "id": "endEvent1", "type": "endEvent", "name": "Order Completed" }
       ],
       "tasks": [
-        { "id": "task1", "type": "userTask", "name": "Scan Items" },
-        { "id": "task2", "type": "userTask", "name": "Announce Total Amount" },
-        { "id": "task3", "type": "userTask", "name": "Receive Cash Payment" }
+        { "id": "task1", "type": "serviceTask", "name": "Check Stock" },
+        { "id": "task2", "type": "userTask", "name": "Restock Item" },
+        { "id": "task3", "type": "userTask", "name": "Pack Items" },
+        { "id": "task4", "type": "serviceTask", "name": "Generate Invoice" },
+        { "id": "task5", "type": "serviceTask", "name": "Ship Order" }
       ],
-      "gateways": [],
+      "gateways": [
+        { "id": "gateway1", "type": "exclusiveGateway", "name": "In Stock?" },
+        { "id": "gateway2", "type": "exclusiveGateway", "name": "Stock Ready" },
+        { "id": "gateway3", "type": "parallelGateway", "name": "Start Fulfillment" },
+        { "id": "gateway4", "type": "parallelGateway", "name": "Fulfillment Done" }
+      ],
       "flows": [
         { "id": "flow1", "type": "sequenceFlow", "source": "startEvent1", "target": "task1" },
-        { "id": "flow2", "type": "sequenceFlow", "source": "task1", "target": "task2" },
-        { "id": "flow3", "type": "sequenceFlow", "source": "task2", "target": "task3" },
-        { "id": "flow4", "type": "sequenceFlow", "source": "task3", "target": "endEvent1" }
+        { "id": "flow2", "type": "sequenceFlow", "source": "task1", "target": "gateway1" },
+        { "id": "flow3", "type": "sequenceFlow", "source": "gateway1", "target": "task2" },
+        { "id": "flow4", "type": "sequenceFlow", "source": "gateway1", "target": "gateway2" },
+        { "id": "flow5", "type": "sequenceFlow", "source": "task2", "target": "gateway2" },
+        { "id": "flow6", "type": "sequenceFlow", "source": "gateway2", "target": "gateway3" },
+        { "id": "flow7", "type": "sequenceFlow", "source": "gateway3", "target": "task3" },
+        { "id": "flow8", "type": "sequenceFlow", "source": "gateway3", "target": "task4" },
+        { "id": "flow9", "type": "sequenceFlow", "source": "task3", "target": "gateway4" },
+        { "id": "flow10", "type": "sequenceFlow", "source": "task4", "target": "gateway4" },
+        { "id": "flow11", "type": "sequenceFlow", "source": "gateway4", "target": "task5" },
+        { "id": "flow12", "type": "sequenceFlow", "source": "task5", "target": "endEvent1" }
       ]
     }
   }
