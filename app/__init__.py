@@ -2,7 +2,6 @@ import logging
 import os
 import sys
 import time
-from config import get_config
 from flask import Flask, request, g, send_from_directory
 from flask_wtf.csrf import CSRFProtect
 from flask_swagger_ui import get_swaggerui_blueprint
@@ -32,6 +31,8 @@ def create_app(config_class=None):
 
     # Load configuration
     if config_class is None:
+        from config import get_config
+
         config_class = get_config()
     app.config.from_object(config_class)
     try:

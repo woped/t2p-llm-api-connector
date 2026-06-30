@@ -1,3 +1,7 @@
-from .llm_service import LLMService
+"""Service package marker.
 
-__all__ = ["LLMService"]
+Keep this module side-effect free so importing submodules like
+`app.services.async_jobs` does not eagerly import heavy provider SDKs.
+"""
+
+__all__ = []
