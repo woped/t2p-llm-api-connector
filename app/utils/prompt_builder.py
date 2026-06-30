@@ -56,7 +56,10 @@ class PromptBuilder:
     def _build_zero_shot_prompt(self, user_input):
         """Build zero-shot prompt using external template with fallback."""
         if self.zero_shot_prompt_template:
-            return self.zero_shot_prompt_template.replace("{{PROCESS_TEXT}}", user_input)
+            prompt = self.zero_shot_prompt_template.replace("{{PROCESS_TEXT}}", user_input)
+            if STRICT_JSON_REMINDER not in prompt:
+                prompt += f"\n\n{STRICT_JSON_REMINDER}"
+            return prompt
         return (
             "Please generate a BPMN model for the following description:\n\n"
             f"{user_input}\n\n"
